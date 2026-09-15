@@ -1,0 +1,42 @@
+{
+  "name": "zteam-desktop",
+  "version": "1.0.0",
+  "description": "Zteam - internal team communication desktop app",
+  "main": "main.js",
+  "author": "Zteam",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder"
+  },
+  "dependencies": {
+    "electron-updater": "^6.3.4"
+  },
+  "devDependencies": {
+    "electron": "^31.3.0",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "com.zteam.desktop",
+    "productName": "Zteam",
+    "files": ["main.js", "preload.js", "assets/**", "client-dist/**"],
+    "win": {
+      "target": ["nsis"],
+      "icon": "assets/icon.ico"
+    },
+    "mac": {
+      "target": ["dmg"],
+      "icon": "assets/icon.icns"
+    },
+    "linux": {
+      "target": ["AppImage", "deb"],
+      "icon": "assets/icon.png",
+      "category": "Network"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    }
+  }
+}
