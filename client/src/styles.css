@@ -407,3 +407,39 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .select-option.selected { color: var(--accent); font-weight: 600; }
 .select-option svg { flex-shrink: 0; }
 .select-empty { padding: 10px; font-size: 13px; color: var(--muted); }
+
+/* ---------- Chat: attach button, file chips, send button ---------- */
+.chat-input .attach-btn {
+  width: 42px; height: 42px; min-width: 42px; padding: 0; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+  background: #eef2fb; border: 1px solid transparent; color: #5b6b8c;
+}
+.chat-input .attach-btn:hover:not(:disabled) { background: #dfe8fb; color: var(--accent); border-color: transparent; }
+.chat-input .attach-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.chat-input .attach-btn svg { display: block; }
+.chat-input .send-btn { display: inline-flex; align-items: center; gap: 8px; }
+.spin { transform-origin: 12px 12px; animation: spin 0.8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.file-chip {
+  display: inline-flex; align-items: center; gap: 10px; max-width: 100%;
+  padding: 8px 12px 8px 8px; border-radius: 10px; text-decoration: none; font-weight: 500;
+  background: rgba(255,255,255,0.65); color: var(--text); border: 1px solid rgba(15,31,61,0.08);
+}
+.file-chip:hover { background: #fff; }
+.file-chip-icon { width: 32px; height: 32px; border-radius: 8px; display: flex; align-items: center; justify-content: center; background: #e2ebff; color: var(--accent); flex-shrink: 0; }
+.file-chip-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 260px; }
+.msg.me .file-chip { background: rgba(255,255,255,0.16); color: #fff; border-color: rgba(255,255,255,0.25); }
+.msg.me .file-chip:hover { background: rgba(255,255,255,0.26); }
+.msg.me .file-chip-icon { background: rgba(255,255,255,0.22); color: #fff; }
+
+.chat-notice { margin: 0 12px; padding: 8px 12px; border-radius: 8px; background: #fef2f2; border: 1px solid #fecaca; color: #b91c1c; font-size: 13px; }
+.thread-preview { display: flex; align-items: center; gap: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.thread-preview svg { flex-shrink: 0; }
+
+/* Call status toast (declined / no answer / missed / offline ...) */
+.call-toast {
+  position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%); z-index: 1400;
+  background: var(--navy); color: #fff; padding: 11px 20px; border-radius: 999px; font-size: 14px;
+  box-shadow: var(--shadow-md); max-width: 90vw; text-align: center;
+}

@@ -1,6 +1,7 @@
 const { Op } = require('sequelize');
 const { Message, User } = require('../models');
 const { canCommunicate } = require('../utils/permissions');
+const { isPresent } = require('../utils/presence');
 
 async function getConversation(req, res) {
   const me = req.user;
@@ -58,7 +59,7 @@ async function listInbox(req, res) {
         id: userMap[t.otherUserId].id,
         name: userMap[t.otherUserId].name,
         position: userMap[t.otherUserId].position,
-        isActive: userMap[t.otherUserId].isActive,
+        isActive: isPresent(userMap[t.otherUserId]),
         avatarUrl: userMap[t.otherUserId].avatarUrl,
       } : null,
       lastMessage: t.lastMessage,

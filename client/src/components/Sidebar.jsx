@@ -23,17 +23,26 @@ export default function Sidebar() {
 
     const socket = getSocket();
     if (!socket) return;
-    const onNewMessage = () => api.get('/api/messages/inbox').then((r) => setInbox(r.data.threads));
+    const onNewMessage = () => api.get('/api/messages/inbox').then((r) => setInbox(r.data.threads)).catch(() => {});
+    // Somebody was deleted: drop them from Recent Chats right away (and re-check the list).
+    const onRemoved = ({ userId }) => {
+      setInbox((list) => list.filter((t) => t.user?.id !== userId));
+      onNewMessage();
+    };
     const onConnReq = () => api.get('/api/connections').then((r) => {
       setPendingCount(r.data.connections.filter((c) => c.status === 'pending' && c.direction === 'received').length);
     });
     socket.on('new-message', onNewMessage);
     socket.on('message-sent', onNewMessage);
+    socket.on('user-removed', onRemoved);
+    socket.on('connect', onNewMessage); // catch up after a reconnect
     socket.on('connection-request', onConnReq);
     socket.on('connection-response', onConnReq);
     return () => {
       socket.off('new-message', onNewMessage);
       socket.off('message-sent', onNewMessage);
+      socket.off('user-removed', onRemoved);
+      socket.off('connect', onNewMessage);
       socket.off('connection-request', onConnReq);
       socket.off('connection-response', onConnReq);
     };

@@ -1,50 +1,199 @@
 import { useEffect, useRef, useState } from 'react';
 import { getSocket } from '../socket';
-import { notifyDesktop, flashTaskbar, clearFlash, playPing } from '../notify';
+import { notifyDesktop, closeNotification, flashTaskbar, clearFlash, playPing } from '../notify';
 import { MicIcon, MicOffIcon, VideoIcon, VideoOffIcon, LeaveIcon } from './CallIcons';
 
 const ICE_SERVERS = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
+const callTag = (callerId) => `zteam-call-${callerId}`;
+
+// Ask for mic (+ camera for video calls). A missing camera downgrades a video
+// call to audio instead of failing; a missing/blocked mic is reported clearly.
+async function getMedia(callType) {
+  if (!navigator.mediaDevices?.getUserMedia) {
+    throw new Error('Your browser blocks the microphone on this address. Open Zteam over HTTPS (or localhost) to make calls.');
+  }
+  try {
+    return { stream: await navigator.mediaDevices.getUserMedia({ audio: true, video: callType === 'video' }), callType };
+  } catch (err) {
+    if (callType === 'video' && err?.name !== 'NotAllowedError') {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+      return { stream, callType: 'audio' };
+    }
+    if (err?.name === 'NotAllowedError') throw new Error('Microphone/camera permission was denied. Allow access in your browser and try again.');
+    if (err?.name === 'NotFoundError') throw new Error('No microphone was found on this device.');
+    throw new Error('Could not access your microphone/camera.');
+  }
+}
 
 export default function CallManager() {
   const [incoming, setIncoming] = useState(null); // { callerId, callerName, callType }
-  const [activeCall, setActiveCall] = useState(null); // { withId, callType, status: connecting|active }
+  const [activeCall, setActiveCall] = useState(null); // { withId, callType, status: calling|connecting|active }
   const [audioMuted, setAudioMuted] = useState(false);
   const [videoOff, setVideoOff] = useState(false);
-  const localVideoRef = useRef(null);
-  const remoteVideoRef = useRef(null);
+  const [toast, setToast] = useState('');
+
+  // Refs mirror the state so socket handlers (registered once) always see the
+  // CURRENT call - previously they saw whatever the call was when they were created.
+  const incomingRef = useRef(null);
+  const activeRef = useRef(null);
   const pcRef = useRef(null);
   const localStreamRef = useRef(null);
+  const remoteStreamRef = useRef(null);
+  const pendingIceRef = useRef([]);
+  const localVideoRef = useRef(null);
+  const remoteMediaRef = useRef(null);
+  const toastTimer = useRef(null);
 
+  const setIncomingBoth = (v) => { incomingRef.current = v; setIncoming(v); };
+  const setActiveBoth = (v) => { activeRef.current = v; setActiveCall(v); };
+  const patchActive = (patch) => { if (activeRef.current) setActiveBoth({ ...activeRef.current, ...patch }); };
+
+  function showToast(message) {
+    setToast(message);
+    clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToast(''), 3500);
+  }
+
+  function dismissIncoming(callerId) {
+    setIncomingBoth(null);
+    closeNotification(callTag(callerId));
+    clearFlash();
+  }
+
+  function teardown() {
+    pcRef.current?.close();
+    pcRef.current = null;
+    localStreamRef.current?.getTracks().forEach((t) => t.stop());
+    localStreamRef.current = null;
+    remoteStreamRef.current = null;
+    pendingIceRef.current = [];
+    setActiveBoth(null);
+    setAudioMuted(false);
+    setVideoOff(false);
+  }
+
+  function createPeerConnection(otherId) {
+    pcRef.current?.close();
+    const pc = new RTCPeerConnection(ICE_SERVERS);
+    pendingIceRef.current = [];
+    pc.onicecandidate = (e) => {
+      if (e.candidate) getSocket()?.emit('webrtc-ice-candidate', { to: otherId, candidate: e.candidate });
+    };
+    pc.ontrack = (e) => {
+      remoteStreamRef.current = e.streams[0] || new MediaStream([e.track]);
+      const el = remoteMediaRef.current;
+      if (el) { el.srcObject = remoteStreamRef.current; el.play?.().catch(() => {}); }
+    };
+    pc.onconnectionstatechange = () => {
+      if (pc !== pcRef.current) return;
+      if (pc.connectionState === 'connected') patchActive({ status: 'active' });
+      if (pc.connectionState === 'failed') {
+        showToast('The call connection was lost.');
+        getSocket()?.emit('call-end', { otherUserId: otherId });
+        teardown();
+      }
+    };
+    const stream = localStreamRef.current;
+    stream?.getTracks().forEach((t) => pc.addTrack(t, stream));
+    pcRef.current = pc;
+    return pc;
+  }
+
+  async function flushIce(pc) {
+    const queued = pendingIceRef.current;
+    pendingIceRef.current = [];
+    for (const c of queued) { try { await pc.addIceCandidate(c); } catch (e) { /* stale */ } }
+  }
+
+  // ---------- Socket events ----------
   useEffect(() => {
     const socket = getSocket();
-    if (!socket) return;
+    if (!socket) return undefined;
 
     const onIncoming = ({ callerId, callerName, callType }) => {
-      setIncoming({ callerId, callerName, callType });
-      notifyDesktop({ title: `Incoming ${callType} call`, body: `${callerName} is calling you` });
+      if (activeRef.current) return; // already on a call (the server also blocks this)
+      setIncomingBoth({ callerId, callerName, callType });
+      notifyDesktop({ title: `Incoming ${callType} call`, body: `${callerName} is calling you`, tag: callTag(callerId) });
       flashTaskbar();
       playPing();
     };
-    const onAccepted = async () => {
-      setActiveCall((c) => c && { ...c, status: 'active' });
-      await createOfferAndSend();
+
+    // The other side picked up: start the media connection.
+    const onAccepted = async ({ by }) => {
+      const c = activeRef.current;
+      if (!c || c.withId !== by || c.status !== 'calling') return; // stale / not our call
+      patchActive({ status: 'connecting' });
+      try {
+        const pc = createPeerConnection(by);
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        getSocket()?.emit('webrtc-offer', { to: by, offer });
+      } catch (err) {
+        console.error('Could not start call', err);
+        getSocket()?.emit('call-end', { otherUserId: by });
+        teardown();
+        showToast('Could not start the call.');
+      }
     };
-    const onRejected = () => { teardown(); };
-    const onEnded = () => { teardown(); };
-    const onUnavailable = () => { alert('User is offline'); setActiveCall(null); };
+
+    const onRejected = ({ by }) => {
+      if (activeRef.current?.withId === by) { teardown(); showToast('Call declined.'); }
+    };
+
+    // The call stopped: caller hung up while ringing, nobody answered in time,
+    // it was answered on another device, or the other person left mid-call.
+    const onEnded = ({ by, reason }) => {
+      if (incomingRef.current?.callerId === by) {
+        const name = incomingRef.current.callerName;
+        dismissIncoming(by);
+        if (reason === 'missed') showToast(`Missed call from ${name}.`);
+      }
+      if (activeRef.current?.withId === by) {
+        teardown();
+        if (reason === 'no-answer') showToast('No answer.');
+        else if (reason === 'disconnected') showToast('The other person lost connection.');
+      }
+    };
+
+    const onUnavailable = ({ reason }) => {
+      teardown();
+      showToast(reason === 'busy' ? 'That person is on another call.' : 'That person is offline.');
+    };
 
     const onOffer = async ({ from, offer }) => {
-      await ensurePeerConnection(from);
-      await pcRef.current.setRemoteDescription(offer);
-      const answer = await pcRef.current.createAnswer();
-      await pcRef.current.setLocalDescription(answer);
-      socket.emit('webrtc-answer', { to: from, answer });
+      const c = activeRef.current;
+      if (!c || c.withId !== from) return;
+      try {
+        const pc = createPeerConnection(from);
+        await pc.setRemoteDescription(offer);
+        await flushIce(pc);
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+        getSocket()?.emit('webrtc-answer', { to: from, answer });
+      } catch (err) {
+        console.error('Could not answer call', err);
+        getSocket()?.emit('call-end', { otherUserId: from });
+        teardown();
+        showToast('Could not connect the call.');
+      }
     };
-    const onAnswer = async ({ answer }) => {
-      await pcRef.current?.setRemoteDescription(answer);
+    const onAnswer = async ({ from, answer }) => {
+      const pc = pcRef.current;
+      if (!pc || activeRef.current?.withId !== from) return;
+      try { await pc.setRemoteDescription(answer); await flushIce(pc); } catch (err) { console.error(err); }
     };
-    const onIce = async ({ candidate }) => {
-      try { await pcRef.current?.addIceCandidate(candidate); } catch (e) { /* ignore */ }
+    // Candidates can arrive before we're ready for them - hold them until we are.
+    const onIce = async ({ from, candidate }) => {
+      if (activeRef.current?.withId !== from) return;
+      const pc = pcRef.current;
+      if (!pc || !pc.remoteDescription) { pendingIceRef.current.push(candidate); return; }
+      try { await pc.addIceCandidate(candidate); } catch (e) { /* ignore */ }
+    };
+
+    // Lost the server connection: any ringing / live call is over.
+    const onDisconnect = () => {
+      if (incomingRef.current) dismissIncoming(incomingRef.current.callerId);
+      if (activeRef.current) { teardown(); showToast('Connection lost — the call ended.'); }
     };
 
     socket.on('incoming-call', onIncoming);
@@ -55,7 +204,7 @@ export default function CallManager() {
     socket.on('webrtc-offer', onOffer);
     socket.on('webrtc-answer', onAnswer);
     socket.on('webrtc-ice-candidate', onIce);
-
+    socket.on('disconnect', onDisconnect);
     return () => {
       socket.off('incoming-call', onIncoming);
       socket.off('call-accepted', onAccepted);
@@ -65,13 +214,15 @@ export default function CallManager() {
       socket.off('webrtc-offer', onOffer);
       socket.off('webrtc-answer', onAnswer);
       socket.off('webrtc-ice-candidate', onIce);
+      socket.off('disconnect', onDisconnect);
     };
-  }, [activeCall?.withId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Notifications for new chat messages (global, so it works from any page)
   useEffect(() => {
     const socket = getSocket();
-    if (!socket) return;
+    if (!socket) return undefined;
     const onMsg = ({ message }) => {
       notifyDesktop({ title: 'New message', body: message.type === 'file' ? 'Sent a file' : message.content });
       flashTaskbar();
@@ -87,7 +238,7 @@ export default function CallManager() {
       flashTaskbar();
       playPing();
     };
-    const onMeetingStarting = ({ meeting, from }) => {
+    const onMeetingStarting = ({ meeting }) => {
       notifyDesktop({ title: 'Meeting starting now', body: `"${meeting.title}" is starting — join now` });
       flashTaskbar();
       playPing();
@@ -115,65 +266,49 @@ export default function CallManager() {
     return () => window.removeEventListener('focus', onFocus);
   }, []);
 
-  async function ensurePeerConnection(otherId) {
-    if (pcRef.current) return pcRef.current;
-    const pc = new RTCPeerConnection(ICE_SERVERS);
-    pc.onicecandidate = (e) => {
-      if (e.candidate) getSocket().emit('webrtc-ice-candidate', { to: otherId, candidate: e.candidate });
-    };
-    pc.ontrack = (e) => {
-      if (remoteVideoRef.current) remoteVideoRef.current.srcObject = e.streams[0];
-    };
-    const stream = await navigator.mediaDevices.getUserMedia({
-      audio: true, video: activeCall?.callType === 'video' || incoming?.callType === 'video',
-    });
-    localStreamRef.current = stream;
-    if (localVideoRef.current) localVideoRef.current.srcObject = stream;
-    stream.getTracks().forEach((t) => pc.addTrack(t, stream));
-    pcRef.current = pc;
-    return pc;
-  }
-
-  async function createOfferAndSend() {
-    const otherId = activeCall.withId;
-    const pc = await ensurePeerConnection(otherId);
-    const offer = await pc.createOffer();
-    await pc.setLocalDescription(offer);
-    getSocket().emit('webrtc-offer', { to: otherId, offer });
-  }
-
-  function startCall(calleeId, callType) {
-    setActiveCall({ withId: calleeId, callType, status: 'connecting' });
-    getSocket().emit('call-request', { calleeId, callType });
+  // ---------- Actions ----------
+  async function startCall(calleeId, callType) {
+    if (activeRef.current || incomingRef.current) { showToast('Finish your current call first.'); return; }
+    let media;
+    try { media = await getMedia(callType); } catch (err) { showToast(err.message); return; }
+    localStreamRef.current = media.stream;
+    setActiveBoth({ withId: calleeId, callType: media.callType, status: 'calling' });
+    getSocket().emit('call-request', { calleeId, callType: media.callType });
   }
 
   async function acceptIncoming() {
-    const { callerId, callType } = incoming;
-    setActiveCall({ withId: callerId, callType, status: 'active' });
-    setIncoming(null);
-    clearFlash();
-    getSocket().emit('call-accept', { callerId });
+    const inc = incomingRef.current;
+    if (!inc) return;
+    let media;
+    try { media = await getMedia(inc.callType); }
+    catch (err) {
+      getSocket()?.emit('call-reject', { callerId: inc.callerId });
+      dismissIncoming(inc.callerId);
+      showToast(err.message);
+      return;
+    }
+    // The caller may have hung up while the permission prompt was open.
+    if (incomingRef.current?.callerId !== inc.callerId) {
+      media.stream.getTracks().forEach((t) => t.stop());
+      return;
+    }
+    localStreamRef.current = media.stream;
+    setActiveBoth({ withId: inc.callerId, callType: inc.callType, status: 'connecting' });
+    dismissIncoming(inc.callerId);
+    getSocket().emit('call-accept', { callerId: inc.callerId });
   }
 
   function rejectIncoming() {
-    getSocket().emit('call-reject', { callerId: incoming.callerId });
-    setIncoming(null);
-    clearFlash();
+    const inc = incomingRef.current;
+    if (!inc) return;
+    getSocket()?.emit('call-reject', { callerId: inc.callerId });
+    dismissIncoming(inc.callerId);
   }
 
   function endCall() {
-    if (activeCall) getSocket().emit('call-end', { otherUserId: activeCall.withId });
+    const c = activeRef.current;
+    if (c) getSocket()?.emit('call-end', { otherUserId: c.withId });
     teardown();
-  }
-
-  function teardown() {
-    pcRef.current?.close();
-    pcRef.current = null;
-    localStreamRef.current?.getTracks().forEach((t) => t.stop());
-    localStreamRef.current = null;
-    setActiveCall(null);
-    setAudioMuted(false);
-    setVideoOff(false);
   }
 
   function toggleAudio() {
@@ -193,8 +328,26 @@ export default function CallManager() {
   // expose startCall to window so ChatWindow (a sibling route) can trigger it
   useEffect(() => { window.__zteamStartCall = startCall; }, []);
 
+  // Attach streams whenever the <video>/<audio> element (re)mounts, so it makes
+  // no difference whether the media arrived before or after the element rendered.
+  const bindLocal = (el) => {
+    localVideoRef.current = el;
+    if (el && localStreamRef.current && el.srcObject !== localStreamRef.current) el.srcObject = localStreamRef.current;
+  };
+  const bindRemote = (el) => {
+    remoteMediaRef.current = el;
+    if (el && remoteStreamRef.current && el.srcObject !== remoteStreamRef.current) {
+      el.srcObject = remoteStreamRef.current;
+      el.play?.().catch(() => {});
+    }
+  };
+
+  const statusLabel = { calling: 'Calling…', connecting: 'Connecting…', active: 'On call' };
+
   return (
     <>
+      {toast && <div className="call-toast" role="status">{toast}</div>}
+
       {incoming && !activeCall && (
         <div className="call-banner">
           <span>{incoming.callType === 'video' ? '🎥' : '📞'} {incoming.callerName} is calling...</span>
@@ -207,19 +360,19 @@ export default function CallManager() {
       {activeCall && (
         <div className="call-modal">
           <div className="call-modal-inner">
-            <div className="call-status">{activeCall.status === 'connecting' ? 'Calling...' : 'On call'}</div>
+            <div className="call-status">{statusLabel[activeCall.status] || 'On call'}</div>
             {activeCall.callType === 'video' ? (
               <div className="meeting-grid call-video-grid">
                 <div className="meeting-tile">
-                  <video ref={localVideoRef} autoPlay muted playsInline className={videoOff ? 'video-hidden' : ''} />
+                  <video ref={bindLocal} autoPlay muted playsInline className={`mirrored ${videoOff ? 'video-hidden' : ''}`} />
                   <div className="meeting-tile-label">You {audioMuted && <MicOffIcon />}</div>
                 </div>
                 <div className="meeting-tile">
-                  <video ref={remoteVideoRef} autoPlay playsInline />
+                  <video ref={bindRemote} autoPlay playsInline />
                 </div>
               </div>
             ) : (
-              <audio ref={remoteVideoRef} autoPlay />
+              <audio ref={bindRemote} autoPlay />
             )}
 
             {/* Footer control bar — same layout/icons as the group meeting room */}
@@ -245,7 +398,7 @@ export default function CallManager() {
                 </button>
               )}
               <button type="button" className="meeting-pill-btn" onClick={endCall} aria-label="End call">
-                <LeaveIcon /> End Call
+                <LeaveIcon /> {activeCall.status === 'calling' ? 'Cancel' : 'End Call'}
               </button>
             </div>
           </div>

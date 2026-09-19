@@ -27,19 +27,36 @@ export function requestNotificationPermission() {
   return Notification.requestPermission();
 }
 
-export function notifyDesktop({ title, body }) {
+// Notifications we've shown, by tag, so a cancelled call's toast can be closed again
+// (e.g. the caller hangs up before anyone answers).
+const shown = new Map();
+
+export function notifyDesktop({ title, body, tag }) {
   if (window.zteamDesktop?.notify) {
-    window.zteamDesktop.notify({ title, body });
+    window.zteamDesktop.notify({ title, body, tag });
     return;
   }
   if ('Notification' in window && Notification.permission === 'granted') {
-    const n = new Notification(title, { body });
+    const n = new Notification(title, { body, tag, renotify: !!tag });
     n.onclick = () => { window.focus(); n.close(); };
+    if (tag) {
+      shown.get(tag)?.close();
+      shown.set(tag, n);
+      n.onclose = () => { if (shown.get(tag) === n) shown.delete(tag); };
+    }
   }
   // If permission is 'default' or 'denied' we deliberately do NOT call
   // requestPermission() here — this fires from a socket event, not a user
   // click, so Chrome would just ignore it. Use the "Enable notifications"
   // button in the app (see NotificationPrompt component) instead.
+}
+
+// Take a notification back down (used when a call stops ringing).
+export function closeNotification(tag) {
+  if (!tag) return;
+  shown.get(tag)?.close();
+  shown.delete(tag);
+  window.zteamDesktop?.closeNotification?.(tag); // only present in newer desktop builds
 }
 
 export function flashTaskbar() {

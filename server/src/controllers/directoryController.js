@@ -1,5 +1,6 @@
 const { Op } = require('sequelize');
 const { User, Department, Connection } = require('../models');
+const { isPresent } = require('../utils/presence');
 
 // List all departments (for the "other departments" browse view)
 async function listDepartments(req, res) {
@@ -49,7 +50,7 @@ async function listDepartmentMembers(req, res) {
     if (unlocked) {
       return {
         id: m.id, name: m.name, position: m.position, email: m.email,
-        phone: m.phone, employeeNumber: m.employeeNumber, isActive: m.isActive,
+        phone: m.phone, employeeNumber: m.employeeNumber, isActive: isPresent(m),
         avatarUrl: m.avatarUrl, unlocked: true, connection: conn || null,
       };
     }

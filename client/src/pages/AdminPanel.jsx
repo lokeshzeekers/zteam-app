@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import api from '../api';
 import { usePresence } from '../context/PresenceContext';
 import Select from '../components/Select';
+import { getSocket } from '../socket';
 
 const ROLE_OPTIONS = [
   { value: 'employee', label: 'Employee' },
@@ -25,7 +26,12 @@ export default function AdminPanel() {
     api.get('/api/admin/departments').then((r) => setDepartments(r.data.departments));
     api.get('/api/admin/employees').then((r) => setEmployees(r.data.employees));
   }
-  useEffect(() => { refresh(); }, []);
+  useEffect(() => {
+    refresh();
+    const socket = getSocket();
+    socket?.on('user-removed', refresh);
+    return () => socket?.off('user-removed', refresh);
+  }, []);
 
   async function createDept(e) {
     e.preventDefault();
@@ -52,8 +58,12 @@ export default function AdminPanel() {
 
   async function deleteEmp(id) {
     if (!confirm('Remove this employee? This cannot be undone.')) return;
-    await api.delete(`/api/admin/employees/${id}`);
-    refresh();
+    try {
+      await api.delete(`/api/admin/employees/${id}`);
+      refresh();
+    } catch (err) {
+      alert(err?.response?.data?.error || 'Could not delete this employee.');
+    }
   }
 
   function openEdit(emp) {

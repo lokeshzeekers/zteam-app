@@ -1,7 +1,12 @@
 const bcrypt = require('bcryptjs');
-const { User, Department } = require('../models');
+const { Op } = require('sequelize');
+const {
+  User, Department, Message, Connection, Group, GroupMember, GroupMessage, Meeting, MeetingParticipant,
+} = require('../models');
 const generatePassword = require('../utils/generatePassword');
 const { publicUser } = require('./authController');
+const { isPresent, forgetUser } = require('../utils/presence');
+const { clearMeetingRoom } = require('../sockets');
 
 // ---- Departments ----
 async function createDepartment(req, res) {
@@ -63,7 +68,7 @@ async function listEmployees(req, res) {
     include: [{ model: Department, as: 'department' }],
     order: [['name', 'ASC']],
   });
-  res.json({ employees: users.map(publicUser) });
+  res.json({ employees: users.map((u) => ({ ...publicUser(u), isActive: isPresent(u) })) });
 }
 
 async function updateEmployee(req, res) {
@@ -102,10 +107,63 @@ async function resetEmployeePassword(req, res) {
   res.json({ success: true, tempPassword });
 }
 
+// Deleting an employee removes them everywhere: their chats, connections,
+// group memberships and meetings go too, every open session of theirs is
+// signed out, and everybody else's screen drops them immediately (recent
+// chats, member lists, green "active" dot) instead of only after a refresh.
 async function deleteEmployee(req, res) {
   const user = await User.findByPk(req.params.id);
   if (!user) return res.status(404).json({ error: 'Employee not found' });
+  if (user.id === req.user.id) return res.status(400).json({ error: 'You cannot delete your own account' });
+
+  const id = user.id;
+  const io = req.app.get('io');
+
+  // Groups they owned: hand over to the longest-standing remaining member, or
+  // remove the group if nobody else is in it.
+  const owned = await Group.findAll({ where: { createdBy: id } });
+  for (const g of owned) {
+    const next = await GroupMember.findOne({
+      where: { groupId: g.id, userId: { [Op.ne]: id } },
+      order: [['id', 'ASC']],
+    });
+    if (next) {
+      g.createdBy = next.userId;
+      await g.save();
+      next.role = 'owner';
+      await next.save();
+    } else {
+      await GroupMessage.destroy({ where: { groupId: g.id } });
+      await GroupMember.destroy({ where: { groupId: g.id } });
+      await g.destroy();
+    }
+  }
+  await GroupMember.destroy({ where: { userId: id } });
+
+  // Meetings they organised are cancelled for the people invited.
+  const organised = await Meeting.findAll({ where: { createdBy: id } });
+  for (const m of organised) {
+    const invited = await MeetingParticipant.findAll({ where: { meetingId: m.id } });
+    invited.filter((x) => x.userId !== id).forEach((x) => io.to(`user:${x.userId}`).emit('meeting-cancelled', { meetingId: m.id, title: m.title }));
+    io.to(`meeting:${m.id}`).emit('meeting-ended', { meetingId: m.id, title: m.title, cancelled: true });
+    io.in(`meeting:${m.id}`).socketsLeave(`meeting:${m.id}`);
+    clearMeetingRoom(m.id);
+    await MeetingParticipant.destroy({ where: { meetingId: m.id } });
+    await m.destroy();
+  }
+  await MeetingParticipant.destroy({ where: { userId: id } });
+
+  await Message.destroy({ where: { [Op.or]: [{ senderId: id }, { receiverId: id }] } });
+  await Connection.destroy({ where: { [Op.or]: [{ requesterId: id }, { receiverId: id }] } });
   await user.destroy();
+
+  // Live clean-up: tell every client (including the deleted user's own open
+  // sessions, which sign themselves out), then cut those sessions off.
+  io.emit('presence-update', { userId: id, isActive: false });
+  io.emit('user-removed', { userId: id });
+  io.in(`user:${id}`).disconnectSockets(true);
+  forgetUser(id);
+
   res.json({ success: true });
 }
 

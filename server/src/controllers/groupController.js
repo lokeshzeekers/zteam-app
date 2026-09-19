@@ -1,5 +1,6 @@
 const { Group, GroupMember, GroupMessage, User } = require('../models');
 const { canCommunicate } = require('../utils/permissions');
+const { isPresent } = require('../utils/presence');
 
 async function isMember(groupId, userId) {
   const row = await GroupMember.findOne({ where: { groupId, userId } });
@@ -59,7 +60,7 @@ async function getGroup(req, res) {
   res.json({
     group: {
       id: group.id, name: group.name, description: group.description, createdBy: group.createdBy,
-      members: users.map((u) => ({ id: u.id, name: u.name, position: u.position, isActive: u.isActive })),
+      members: users.map((u) => ({ id: u.id, name: u.name, position: u.position, isActive: isPresent(u) })),
     },
   });
 }

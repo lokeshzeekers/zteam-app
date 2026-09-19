@@ -4,6 +4,7 @@ import api from '../api';
 import { getSocket } from '../socket';
 import { useAuth } from '../context/AuthContext';
 import { usePresence } from '../context/PresenceContext';
+import { AttachButton, FileAttachment, SendIcon } from '../components/ChatIcons';
 
 export default function GroupChat() {
   const { groupId } = useParams();
@@ -14,6 +15,8 @@ export default function GroupChat() {
   const [messages, setMessages] = useState([]);
   const [text, setText] = useState('');
   const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
+  const [uploading, setUploading] = useState(false);
   const [showMembers, setShowMembers] = useState(false);
   const [showEdit, setShowEdit] = useState(false);
   const [editName, setEditName] = useState('');
@@ -31,18 +34,32 @@ export default function GroupChat() {
 
   useEffect(() => {
     setError('');
+    const loadMessages = () => api.get(`/api/groups/${groupId}/messages`).then((r) => setMessages(r.data.messages)).catch(() => {});
     loadGroup().catch(() => setError('Group not found or you are not a member'));
-    api.get(`/api/groups/${groupId}/messages`).then((r) => setMessages(r.data.messages));
+    loadMessages();
 
     const socket = getSocket();
-    if (!socket) return;
+    if (!socket) return undefined;
     socket.emit('join-group-room', { groupId: Number(groupId) });
     const handler = ({ message }) => {
-      if (String(message.groupId) === String(groupId)) setMessages((prev) => [...prev, message]);
+      if (String(message.groupId) === String(groupId)) {
+        setMessages((prev) => (prev.some((m) => m.id === message.id) ? prev : [...prev, message]));
+      }
     };
+    // After a reconnect the server has forgotten our room: rejoin it and catch up.
+    const onReconnect = () => {
+      socket.emit('join-group-room', { groupId: Number(groupId) });
+      loadMessages();
+      loadGroup().catch(() => {});
+    };
+    const onRemoved = () => { loadGroup().catch(() => {}); };
     socket.on('new-group-message', handler);
+    socket.on('connect', onReconnect);
+    socket.on('user-removed', onRemoved);
     return () => {
       socket.off('new-group-message', handler);
+      socket.off('connect', onReconnect);
+      socket.off('user-removed', onRemoved);
       socket.emit('leave-group-room', { groupId: Number(groupId) });
     };
   }, [groupId]);
@@ -62,14 +79,22 @@ export default function GroupChat() {
 
   async function onFilePick(e) {
     const file = e.target.files?.[0];
-    if (!file) return;
-    const form = new FormData();
-    form.append('file', file);
-    const { data } = await api.post('/api/files/upload', form, { headers: { 'Content-Type': 'multipart/form-data' } });
-    getSocket().emit('send-group-message', {
-      groupId: Number(groupId), type: 'file', fileUrl: data.fileUrl, fileName: data.fileName,
-    }, (res) => { if (res?.error) setError(res.error); });
     e.target.value = '';
+    if (!file) return;
+    setNotice('');
+    setUploading(true);
+    try {
+      const form = new FormData();
+      form.append('file', file);
+      const { data } = await api.post('/api/files/upload', form, { headers: { 'Content-Type': 'multipart/form-data' } });
+      getSocket().emit('send-group-message', {
+        groupId: Number(groupId), type: 'file', fileUrl: data.fileUrl, fileName: data.fileName,
+      }, (res) => { if (res?.error) setNotice(res.error); });
+    } catch (err) {
+      setNotice(err?.response?.data?.error || 'Could not upload the file.');
+    } finally {
+      setUploading(false);
+    }
   }
 
   async function startMeetingNow() {
@@ -176,7 +201,7 @@ export default function GroupChat() {
               <div className="msg-sender">{group?.members.find((mem) => mem.id === m.senderId)?.name || 'Member'}</div>
             )}
             {m.type === 'file' ? (
-              <a href={(api.defaults.baseURL || '') + m.fileUrl} target="_blank" rel="noreferrer">📎 {m.fileName}</a>
+              <FileAttachment fileUrl={m.fileUrl} fileName={m.fileName} />
             ) : (
               m.content
             )}
@@ -185,11 +210,12 @@ export default function GroupChat() {
         ))}
         <div ref={bottomRef} />
       </div>
+      {notice && <div className="chat-notice" role="alert">{notice}</div>}
       <form className="chat-input" onSubmit={send}>
-        <button type="button" onClick={() => fileInputRef.current.click()}>📎</button>
+        <AttachButton onClick={() => fileInputRef.current.click()} uploading={uploading} />
         <input type="file" ref={fileInputRef} style={{ display: 'none' }} onChange={onFilePick} />
         <input value={text} onChange={(e) => setText(e.target.value)} placeholder="Message the group..." />
-        <button type="submit">Send</button>
+        <button type="submit" className="send-btn"><SendIcon size={16} /> Send</button>
       </form>
 
       {showEdit && (

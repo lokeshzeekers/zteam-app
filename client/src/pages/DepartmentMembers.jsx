@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import api from '../api';
 import { useAuth } from '../context/AuthContext';
 import { usePresence } from '../context/PresenceContext';
+import { getSocket } from '../socket';
 
 export default function DepartmentMembers() {
   const { id } = useParams();
@@ -19,7 +20,12 @@ export default function DepartmentMembers() {
     });
   }
 
-  useEffect(() => { refresh(); }, [id]);
+  useEffect(() => {
+    refresh();
+    const socket = getSocket();
+    socket?.on('user-removed', refresh);
+    return () => socket?.off('user-removed', refresh);
+  }, [id]);
 
   async function sendRequest(receiverId) {
     try {

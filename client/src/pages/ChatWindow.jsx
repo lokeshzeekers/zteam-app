@@ -3,6 +3,7 @@ import { useParams } from 'react-router-dom';
 import api from '../api';
 import { getSocket } from '../socket';
 import { useAuth } from '../context/AuthContext';
+import { AttachButton, FileAttachment, SendIcon } from '../components/ChatIcons';
 
 export default function ChatWindow({ onStartCall }) {
   const { userId } = useParams();
@@ -11,27 +12,38 @@ export default function ChatWindow({ onStartCall }) {
   const [text, setText] = useState('');
   const [otherUser, setOtherUser] = useState(null);
   const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
+  const [uploading, setUploading] = useState(false);
   const bottomRef = useRef(null);
   const fileInputRef = useRef(null);
 
   useEffect(() => {
     setError('');
-    api.get(`/api/messages/with/${userId}`)
+    const load = () => api.get(`/api/messages/with/${userId}`)
       .then((r) => setMessages(r.data.messages))
       .catch((err) => setError(err?.response?.data?.error || 'Cannot load conversation'));
+    load();
 
     const socket = getSocket();
-    if (!socket) return;
+    if (!socket) return undefined;
     const handler = ({ message }) => {
       if (message.senderId === Number(userId) || message.receiverId === Number(userId)) {
-        setMessages((prev) => [...prev, message]);
+        // Never show the same message twice (e.g. one that also arrived via a refetch).
+        setMessages((prev) => (prev.some((m) => m.id === message.id) ? prev : [...prev, message]));
       }
+    };
+    const onRemoved = ({ userId: removedId }) => {
+      if (Number(removedId) === Number(userId)) setError('This person is no longer part of Zteam.');
     };
     socket.on('new-message', handler);
     socket.on('message-sent', handler);
+    socket.on('user-removed', onRemoved);
+    socket.on('connect', load); // pick up anything sent while we were disconnected
     return () => {
       socket.off('new-message', handler);
       socket.off('message-sent', handler);
+      socket.off('user-removed', onRemoved);
+      socket.off('connect', load);
     };
   }, [userId]);
 
@@ -51,15 +63,22 @@ export default function ChatWindow({ onStartCall }) {
 
   async function onFilePick(e) {
     const file = e.target.files?.[0];
-    if (!file) return;
-    const form = new FormData();
-    form.append('file', file);
-    const { data } = await api.post('/api/files/upload', form, { headers: { 'Content-Type': 'multipart/form-data' } });
-    const socket = getSocket();
-    socket.emit('send-message', {
-      receiverId: Number(userId), type: 'file', fileUrl: data.fileUrl, fileName: data.fileName,
-    }, (res) => { if (res?.error) setError(res.error); });
     e.target.value = '';
+    if (!file) return;
+    setNotice('');
+    setUploading(true);
+    try {
+      const form = new FormData();
+      form.append('file', file);
+      const { data } = await api.post('/api/files/upload', form, { headers: { 'Content-Type': 'multipart/form-data' } });
+      getSocket().emit('send-message', {
+        receiverId: Number(userId), type: 'file', fileUrl: data.fileUrl, fileName: data.fileName,
+      }, (res) => { if (res?.error) setNotice(res.error); });
+    } catch (err) {
+      setNotice(err?.response?.data?.error || 'Could not upload the file.');
+    } finally {
+      setUploading(false);
+    }
   }
 
   if (error) {
@@ -79,7 +98,7 @@ export default function ChatWindow({ onStartCall }) {
         {messages.map((m) => (
           <div key={m.id} className={`msg ${m.senderId === user.id ? 'me' : 'them'}`}>
             {m.type === 'file' ? (
-              <a href={(api.defaults.baseURL || '') + m.fileUrl} target="_blank" rel="noreferrer">📎 {m.fileName}</a>
+              <FileAttachment fileUrl={m.fileUrl} fileName={m.fileName} />
             ) : (
               m.content
             )}
@@ -88,11 +107,12 @@ export default function ChatWindow({ onStartCall }) {
         ))}
         <div ref={bottomRef} />
       </div>
+      {notice && <div className="chat-notice" role="alert">{notice}</div>}
       <form className="chat-input" onSubmit={send}>
-        <button type="button" onClick={() => fileInputRef.current.click()}>📎</button>
+        <AttachButton onClick={() => fileInputRef.current.click()} uploading={uploading} />
         <input type="file" ref={fileInputRef} style={{ display: 'none' }} onChange={onFilePick} />
         <input value={text} onChange={(e) => setText(e.target.value)} placeholder="Type a message..." />
-        <button type="submit">Send</button>
+        <button type="submit" className="send-btn"><SendIcon size={16} /> Send</button>
       </form>
     </div>
   );

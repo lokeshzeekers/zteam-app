@@ -24,7 +24,11 @@ export default function Groups() {
     const socket = getSocket();
     const onInvite = () => refresh();
     socket?.on('group-invite', onInvite);
-    return () => socket?.off('group-invite', onInvite);
+    socket?.on('user-removed', onInvite);
+    return () => {
+      socket?.off('group-invite', onInvite);
+      socket?.off('user-removed', onInvite);
+    };
   }, []);
 
   async function openCreate() {
