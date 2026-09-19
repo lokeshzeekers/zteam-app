@@ -107,7 +107,7 @@ export default function Groups() {
                 ))}
               </div>
               <div className="edit-modal-actions">
-                <button type="button" className="btn-reject" onClick={() => setShowCreate(false)}>Cancel</button>
+                <button type="button" className="btn-secondary" onClick={() => setShowCreate(false)}>Cancel</button>
                 <button type="submit" disabled={saving}>{saving ? 'Creating...' : 'Create Group'}</button>
               </div>
             </form>

@@ -8,5 +8,6 @@ router.get('/', ctrl.listMyMeetings);
 router.put('/:id', ctrl.updateMeeting);
 router.delete('/:id', ctrl.deleteMeeting);
 router.post('/:id/start', ctrl.startMeeting);
+router.post('/:id/end', ctrl.endMeeting);
 
 module.exports = router;

@@ -3,6 +3,12 @@ import { useNavigate } from 'react-router-dom';
 import api from '../api';
 import { useAuth } from '../context/AuthContext';
 import { getSocket } from '../socket';
+import Select from '../components/Select';
+
+const CALL_TYPE_OPTIONS = [
+  { value: 'video', label: 'Video' },
+  { value: 'audio', label: 'Audio only' },
+];
 
 function toLocalInputValue(date) {
   const d = new Date(date);
@@ -18,12 +24,16 @@ export default function Meetings() {
   const [candidates, setCandidates] = useState([]);
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState(null); // meeting being edited, or null = creating
-  const [form, setForm] = useState({ title: '', description: '', callType: 'video', scheduledAt: '', durationMinutes: 30, groupId: '', participantIds: [] });
+  const [form, setForm] = useState({ title: '', description: '', callType: 'video', scheduledAt: '', durationMinutes: 30, groupId: '', participantIds: [], startNow: false });
   const [error, setError] = useState('');
+  const [actionError, setActionError] = useState('');
+  const [busyId, setBusyId] = useState(null);
   const [saving, setSaving] = useState(false);
 
   function refresh() {
-    api.get('/api/meetings').then((r) => setMeetings(r.data.meetings));
+    api.get('/api/meetings')
+      .then((r) => setMeetings(r.data.meetings))
+      .catch(() => setActionError('Could not load meetings. Please refresh the page.'));
   }
 
   useEffect(() => {
@@ -35,11 +45,13 @@ export default function Meetings() {
     socket?.on('meeting-updated', onChange);
     socket?.on('meeting-cancelled', onChange);
     socket?.on('meeting-starting', onChange);
+    socket?.on('meeting-ended', onChange);
     return () => {
       socket?.off('meeting-invite', onChange);
       socket?.off('meeting-updated', onChange);
       socket?.off('meeting-cancelled', onChange);
       socket?.off('meeting-starting', onChange);
+      socket?.off('meeting-ended', onChange);
     };
   }, []);
 
@@ -47,17 +59,22 @@ export default function Meetings() {
     setEditing(null);
     setError('');
     const in30 = new Date(Date.now() + 30 * 60 * 1000);
-    setForm({ title: '', description: '', callType: 'video', scheduledAt: toLocalInputValue(in30), durationMinutes: 30, groupId: '', participantIds: [] });
-
-    const people = new Map();
-    if (user.departmentId) {
-      const { data } = await api.get(`/api/directory/departments/${user.departmentId}/members`);
-      data.members.forEach((m) => { if (!m.isSelf) people.set(m.id, m); });
-    }
-    const { data: conns } = await api.get('/api/connections');
-    conns.connections.filter((c) => c.status === 'accepted').forEach((c) => people.set(c.user.id, c.user));
-    setCandidates([...people.values()]);
+    setForm({ title: '', description: '', callType: 'video', scheduledAt: toLocalInputValue(in30), durationMinutes: 30, groupId: '', participantIds: [], startNow: false });
     setShowForm(true);
+
+    // Load people you can invite. A failure here must never stop the form from opening.
+    const people = new Map();
+    try {
+      if (user.departmentId) {
+        const { data } = await api.get(`/api/directory/departments/${user.departmentId}/members`);
+        data.members.forEach((m) => { if (!m.isSelf) people.set(m.id, m); });
+      }
+    } catch (err) { /* keep going with connections only */ }
+    try {
+      const { data: conns } = await api.get('/api/connections');
+      conns.connections.filter((c) => c.status === 'accepted' && c.user).forEach((c) => people.set(c.user.id, c.user));
+    } catch (err) { /* keep going with whoever we found */ }
+    setCandidates([...people.values()]);
   }
 
   function openEdit(m) {
@@ -66,7 +83,7 @@ export default function Meetings() {
     setForm({
       title: m.title, description: m.description || '', callType: m.callType,
       scheduledAt: toLocalInputValue(m.scheduledAt), durationMinutes: m.durationMinutes,
-      groupId: '', participantIds: [],
+      groupId: '', participantIds: [], startNow: false,
     });
     setShowForm(true);
   }
@@ -87,11 +104,18 @@ export default function Meetings() {
           addParticipantIds: form.participantIds,
         });
       } else {
-        await api.post('/api/meetings', {
+        const { data } = await api.post('/api/meetings', {
           title: form.title, description: form.description, callType: form.callType,
-          scheduledAt: new Date(form.scheduledAt).toISOString(), durationMinutes: Number(form.durationMinutes),
+          scheduledAt: form.startNow ? new Date().toISOString() : new Date(form.scheduledAt).toISOString(),
+          durationMinutes: Number(form.durationMinutes) || 30,
           groupId: form.groupId || undefined, participantIds: form.participantIds,
+          startNow: form.startNow,
         });
+        if (form.startNow) {
+          setShowForm(false);
+          navigate(`/meetings/${data.meeting.id}/room`);
+          return;
+        }
       }
       setShowForm(false);
       refresh();
@@ -102,15 +126,30 @@ export default function Meetings() {
     }
   }
 
-  async function cancelMeeting(id) {
-    if (!confirm('Cancel and delete this meeting? Invited participants will be notified.')) return;
-    await api.delete(`/api/meetings/${id}`);
-    refresh();
+  async function runAction(id, fn) {
+    setActionError('');
+    setBusyId(id);
+    try { await fn(); }
+    catch (err) { setActionError(err?.response?.data?.error || 'Something went wrong. Please try again.'); }
+    finally { setBusyId(null); }
   }
 
-  async function startNow(id) {
-    await api.post(`/api/meetings/${id}/start`);
-    navigate(`/meetings/${id}/room`);
+  function cancelMeeting(id) {
+    if (!confirm('Cancel and delete this meeting? Invited participants will be notified.')) return;
+    return runAction(id, async () => { await api.delete(`/api/meetings/${id}`); refresh(); });
+  }
+
+  // Host: start a scheduled meeting (or re-enter one that's already live) and go to the room.
+  function startNow(m) {
+    return runAction(m.id, async () => {
+      if (m.status !== 'ongoing') await api.post(`/api/meetings/${m.id}/start`);
+      navigate(`/meetings/${m.id}/room`);
+    });
+  }
+
+  function endMeeting(id) {
+    if (!confirm('End this meeting for everyone?')) return;
+    return runAction(id, async () => { await api.post(`/api/meetings/${id}/end`); refresh(); });
   }
 
   const upcoming = meetings.filter((m) => m.status === 'scheduled' || m.status === 'ongoing');
@@ -123,6 +162,8 @@ export default function Meetings() {
         <button className="primary-btn" onClick={openCreate}>+ Schedule Meeting</button>
       </div>
 
+      {actionError && <div className="auth-error" style={{ marginBottom: 12 }}>{actionError}</div>}
+
       <h3>Upcoming</h3>
       {upcoming.length === 0 && (
         <div className="empty-state">
@@ -130,25 +171,37 @@ export default function Meetings() {
           <p className="muted">Schedule a meeting to get your team on a call at a set time.</p>
         </div>
       )}
-      {upcoming.map((m) => (
-        <div className="request-row" key={m.id}>
-          <div>
-            <strong>{m.title}</strong>{' '}
-            <span className={`status-pill ${m.status === 'ongoing' ? 'accepted' : 'pending'}`}>{m.status}</span>
-            <div className="muted small">{new Date(m.scheduledAt).toLocaleString()} · {m.durationMinutes} min · {m.callType}</div>
-            <div className="muted small">{m.participants.map((p) => p.name).join(', ')}</div>
+      {upcoming.map((m) => {
+        const live = m.status === 'ongoing';
+        const busy = busyId === m.id;
+        return (
+          <div className="request-row" key={m.id}>
+            <div className="meeting-meta">
+              <div className="meeting-title-line">
+                <strong>{m.title}</strong>
+                <span className={`status-pill ${live ? 'accepted' : 'pending'}`}>{live ? 'live now' : 'scheduled'}</span>
+              </div>
+              <div className="muted small">{new Date(m.scheduledAt).toLocaleString()} · {m.durationMinutes} min · {m.callType === 'audio' ? 'audio' : 'video'} · host: {m.isOwner ? 'you' : m.hostName}</div>
+              <div className="muted small">{m.participants.map((p) => p.name).join(', ')}</div>
+            </div>
+            <div className="request-actions">
+              {/* Everyone can join once it is live; only the host can start it. */}
+              {live && (
+                <button type="button" className="btn-success" disabled={busy} onClick={() => navigate(`/meetings/${m.id}/room`)}>Join</button>
+              )}
+              {!live && m.isOwner && (
+                <button type="button" className="btn-success" disabled={busy} onClick={() => startNow(m)}>{busy ? 'Starting…' : 'Start now'}</button>
+              )}
+              {!live && !m.isOwner && <span className="muted small">Waiting for host to start</span>}
+              {live && m.isOwner && (
+                <button type="button" className="btn-outline-danger" disabled={busy} onClick={() => endMeeting(m.id)}>End</button>
+              )}
+              {m.isOwner && <button type="button" className="btn-secondary" disabled={busy} onClick={() => openEdit(m)}>Edit</button>}
+              {m.isOwner && <button type="button" className="btn-danger" disabled={busy} onClick={() => cancelMeeting(m.id)}>Delete</button>}
+            </div>
           </div>
-          <div className="request-actions">
-            {(m.status === 'ongoing' || m.status === 'scheduled') && (
-              <button className="btn-accept" onClick={() => (m.status === 'ongoing' ? navigate(`/meetings/${m.id}/room`) : startNow(m.id))}>
-                {m.status === 'ongoing' ? 'Join' : 'Start now'}
-              </button>
-            )}
-            {m.isOwner && <button onClick={() => openEdit(m)}>Edit</button>}
-            {m.isOwner && <button className="btn-reject" onClick={() => cancelMeeting(m.id)}>Delete</button>}
-          </div>
-        </div>
-      ))}
+        );
+      })}
 
       {past.length > 0 && (
         <>
@@ -170,41 +223,62 @@ export default function Meetings() {
             <h3>{editing ? 'Edit Meeting' : 'Schedule Meeting'}</h3>
             <form className="profile-form flat" onSubmit={save}>
               {error && <div className="auth-error">{error}</div>}
-              <label>Title</label>
-              <input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} required autoFocus />
-              <label>Description</label>
-              <input value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
-              <label>Date &amp; time</label>
-              <input type="datetime-local" value={form.scheduledAt} onChange={(e) => setForm({ ...form, scheduledAt: e.target.value })} required />
-              <label>Duration (minutes)</label>
-              <input type="number" min="5" step="5" value={form.durationMinutes} onChange={(e) => setForm({ ...form, durationMinutes: e.target.value })} />
-              <label>Call type</label>
-              <select value={form.callType} onChange={(e) => setForm({ ...form, callType: e.target.value })}>
-                <option value="video">Video</option>
-                <option value="audio">Audio only</option>
-              </select>
-              {!editing && (
-                <>
-                  <label>Use a group's member list (optional)</label>
-                  <select value={form.groupId} onChange={(e) => setForm({ ...form, groupId: e.target.value })}>
-                    <option value="">— None —</option>
-                    {groups.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
-                  </select>
-                </>
-              )}
-              <label>{editing ? 'Invite more people' : 'Invite people'}</label>
-              <div className="checkbox-list">
-                {candidates.length === 0 && <p className="muted small">No connected colleagues to invite yet.</p>}
-                {candidates.map((c) => (
-                  <label key={c.id} className="checkbox-row">
-                    <input type="checkbox" checked={form.participantIds.includes(c.id)} onChange={() => toggleParticipant(c.id)} />
-                    {c.name} <span className="muted small">— {c.position || 'Member'}</span>
-                  </label>
-                ))}
+              <div className="form-grid">
+                <div className="form-field full">
+                  <label htmlFor="mt-title">Title</label>
+                  <input id="mt-title" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} required autoFocus />
+                </div>
+                <div className="form-field full">
+                  <label htmlFor="mt-desc">Description</label>
+                  <input id="mt-desc" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
+                </div>
+                <div className="form-field">
+                  <label htmlFor="mt-when">Date &amp; time</label>
+                  <input id="mt-when" type="datetime-local" value={form.scheduledAt} onChange={(e) => setForm({ ...form, scheduledAt: e.target.value })} required disabled={!editing && form.startNow} />
+                </div>
+                <div className="form-field">
+                  <label htmlFor="mt-dur">Duration (minutes)</label>
+                  <input id="mt-dur" type="number" min="5" step="5" value={form.durationMinutes} onChange={(e) => setForm({ ...form, durationMinutes: e.target.value })} />
+                </div>
+                <div className="form-field">
+                  <label>Call type</label>
+                  <Select value={form.callType} onChange={(v) => setForm({ ...form, callType: v })} options={CALL_TYPE_OPTIONS} ariaLabel="Call type" />
+                </div>
+                {!editing && (
+                  <div className="form-field">
+                    <label>Use a group's members <span className="label-hint">(optional)</span></label>
+                    <Select
+                      value={form.groupId}
+                      onChange={(v) => setForm({ ...form, groupId: v })}
+                      options={[{ value: '', label: '— None —' }, ...groups.map((g) => ({ value: g.id, label: g.name }))]}
+                      ariaLabel="Group"
+                    />
+                  </div>
+                )}
+                <div className="form-field full">
+                  <label>{editing ? 'Invite more people' : 'Invite people'}</label>
+                  <div className="checkbox-list">
+                    {candidates.length === 0 && <p className="muted small">No connected colleagues to invite yet.</p>}
+                    {candidates.map((c) => (
+                      <label key={c.id} className="checkbox-row">
+                        <input type="checkbox" checked={form.participantIds.includes(c.id)} onChange={() => toggleParticipant(c.id)} />
+                        {c.name} <span className="muted small">— {c.position || 'Member'}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+                {!editing && (
+                  <div className="form-field full">
+                    <label className="check-row">
+                      <input type="checkbox" checked={form.startNow} onChange={(e) => setForm({ ...form, startNow: e.target.checked })} />
+                      Start this meeting right now
+                    </label>
+                  </div>
+                )}
               </div>
               <div className="edit-modal-actions">
-                <button type="button" className="btn-reject" onClick={() => setShowForm(false)}>Cancel</button>
-                <button type="submit" disabled={saving}>{saving ? 'Saving...' : editing ? 'Save changes' : 'Schedule'}</button>
+                <button type="button" className="btn-secondary" onClick={() => setShowForm(false)}>Cancel</button>
+                <button type="submit" disabled={saving}>{saving ? 'Saving...' : editing ? 'Save changes' : form.startNow ? 'Start meeting' : 'Schedule'}</button>
               </div>
             </form>
           </div>

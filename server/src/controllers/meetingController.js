@@ -2,6 +2,7 @@ const crypto = require('crypto');
 const { Op } = require('sequelize');
 const { Meeting, MeetingParticipant, GroupMember, User } = require('../models');
 const { canCommunicate } = require('../utils/permissions');
+const { clearMeetingRoom } = require('../sockets');
 
 function makeRoomKey() {
   return crypto.randomBytes(12).toString('hex');
@@ -83,6 +84,7 @@ async function listMyMeetings(req, res) {
       createdBy: m.createdBy, scheduledAt: m.scheduledAt, durationMinutes: m.durationMinutes,
       status: m.status, roomKey: m.roomKey,
       isOwner: m.createdBy === req.user.id,
+      hostName: users.find((u) => u.id === m.createdBy)?.name || 'Host',
       participants: users.map((u) => ({ id: u.id, name: u.name, position: u.position })),
     });
   }
@@ -133,6 +135,10 @@ async function deleteMeeting(req, res) {
   const io = req.app.get('io');
   participants.forEach((p) => io.to(`user:${p.userId}`).emit('meeting-cancelled', { meetingId: meeting.id, title: meeting.title }));
 
+  io.to(`meeting:${meeting.id}`).emit('meeting-ended', { meetingId: meeting.id, title: meeting.title, cancelled: true });
+  io.in(`meeting:${meeting.id}`).socketsLeave(`meeting:${meeting.id}`);
+  clearMeetingRoom(meeting.id);
+
   await MeetingParticipant.destroy({ where: { meetingId: meeting.id } });
   await meeting.destroy();
   res.json({ success: true });
@@ -150,6 +156,9 @@ async function startMeeting(req, res) {
   if (meeting.status === 'cancelled' || meeting.status === 'ended') {
     return res.status(400).json({ error: `Meeting has already ${meeting.status}` });
   }
+  // Already live (e.g. the scheduler or a double-click beat us to it): nothing to do.
+  if (meeting.status === 'ongoing') return res.json({ meeting });
+
   meeting.status = 'ongoing';
   meeting.startedAt = new Date();
   await meeting.save();
@@ -164,4 +173,30 @@ async function startMeeting(req, res) {
   res.json({ meeting });
 }
 
-module.exports = { createMeeting, listMyMeetings, updateMeeting, deleteMeeting, startMeeting };
+// End a live meeting for everyone (organizer / admin only). Anyone still in the
+// room is told, so their client can leave cleanly.
+async function endMeeting(req, res) {
+  const meeting = await Meeting.findByPk(req.params.id);
+  if (!meeting) return res.status(404).json({ error: 'Meeting not found' });
+  if (meeting.createdBy !== req.user.id && req.user.role !== 'admin') {
+    return res.status(403).json({ error: 'Only the organizer can end this meeting' });
+  }
+  if (meeting.status === 'ended' || meeting.status === 'cancelled') return res.json({ meeting });
+
+  meeting.status = 'ended';
+  meeting.endedAt = new Date();
+  await meeting.save();
+
+  const io = req.app.get('io');
+  io.to(`meeting:${meeting.id}`).emit('meeting-ended', { meetingId: meeting.id, title: meeting.title });
+  io.in(`meeting:${meeting.id}`).socketsLeave(`meeting:${meeting.id}`);
+  clearMeetingRoom(meeting.id);
+
+  // Everyone on the meetings page refreshes their list.
+  const participants = await MeetingParticipant.findAll({ where: { meetingId: meeting.id } });
+  participants.forEach((p) => io.to(`user:${p.userId}`).emit('meeting-updated', { meetingId: meeting.id }));
+
+  res.json({ meeting });
+}
+
+module.exports = { createMeeting, listMyMeetings, updateMeeting, deleteMeeting, startMeeting, endMeeting };

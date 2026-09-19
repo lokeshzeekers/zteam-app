@@ -1,6 +1,12 @@
 import { useEffect, useState } from 'react';
 import api from '../api';
 import { usePresence } from '../context/PresenceContext';
+import Select from '../components/Select';
+
+const ROLE_OPTIONS = [
+  { value: 'employee', label: 'Employee' },
+  { value: 'admin', label: 'Admin' },
+];
 
 export default function AdminPanel() {
   const { isUserActive } = usePresence();
@@ -44,11 +50,6 @@ export default function AdminPanel() {
     refresh();
   }
 
-  async function resetPassword(id) {
-    const { data } = await api.post(`/api/admin/employees/${id}/reset-password`);
-    alert(`New temporary password: ${data.tempPassword}`);
-  }
-
   async function deleteEmp(id) {
     if (!confirm('Remove this employee? This cannot be undone.')) return;
     await api.delete(`/api/admin/employees/${id}`);
@@ -81,6 +82,7 @@ export default function AdminPanel() {
   }
 
   const deptName = (id) => departments.find((d) => d.id === id)?.name || '—';
+  const deptOptions = departments.map((d) => ({ value: d.id, label: d.name }));
 
   return (
     <div className="panel">
@@ -104,7 +106,11 @@ export default function AdminPanel() {
                 {departments.map((d) => (
                   <tr key={d.id}>
                     <td>{d.name}</td><td>{d.description}</td>
-                    <td><button className="btn-reject" onClick={() => deleteDept(d.id)}>Delete</button></td>
+                    <td>
+                      <div className="row-actions">
+                        <button type="button" className="btn-danger btn-sm" onClick={() => deleteDept(d.id)}>Delete</button>
+                      </div>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -121,14 +127,19 @@ export default function AdminPanel() {
             <input placeholder="Phone number" value={newEmp.phone} onChange={(e) => setNewEmp({ ...newEmp, phone: e.target.value })} />
             <input placeholder="Employee No." value={newEmp.employeeNumber} onChange={(e) => setNewEmp({ ...newEmp, employeeNumber: e.target.value })} />
             <input placeholder="Position" value={newEmp.position} onChange={(e) => setNewEmp({ ...newEmp, position: e.target.value })} />
-            <select value={newEmp.departmentId} onChange={(e) => setNewEmp({ ...newEmp, departmentId: e.target.value })}>
-              <option value="">Department</option>
-              {departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
-            </select>
-            <select value={newEmp.role} onChange={(e) => setNewEmp({ ...newEmp, role: e.target.value })}>
-              <option value="employee">Employee</option>
-              <option value="admin">Admin</option>
-            </select>
+            <Select
+              value={newEmp.departmentId}
+              onChange={(v) => setNewEmp({ ...newEmp, departmentId: v })}
+              options={deptOptions}
+              placeholder="Department"
+              ariaLabel="Department"
+            />
+            <Select
+              value={newEmp.role}
+              onChange={(v) => setNewEmp({ ...newEmp, role: v })}
+              options={ROLE_OPTIONS}
+              ariaLabel="Role"
+            />
             <button type="submit">Add Employee</button>
           </form>
 
@@ -145,15 +156,16 @@ export default function AdminPanel() {
             <tbody>
               {employees.map((e) => (
                 <tr key={e.id}>
-                  <td>{e.name} {e.role === 'admin' && <span className="status-pill accepted">admin</span>}</td>
+                  <td>{e.name}{e.role === 'admin' && <span className="status-pill accepted ml">admin</span>}</td>
                   <td>{e.position}</td>
                   <td>{deptName(e.departmentId)}</td>
                   <td>{e.phone}</td>
                   <td><span className={`status-pill ${isUserActive(e.id, e.isActive) ? 'accepted' : 'pending'}`}>{isUserActive(e.id, e.isActive) ? 'active' : 'offline'}</span></td>
                   <td>
-                    <button onClick={() => openEdit(e)}>Edit</button>
-                    <button onClick={() => resetPassword(e.id)}>Reset PW</button>
-                    <button className="btn-reject" onClick={() => deleteEmp(e.id)}>Delete</button>
+                    <div className="row-actions">
+                      <button type="button" className="btn-secondary btn-sm" onClick={() => openEdit(e)}>Edit</button>
+                      <button type="button" className="btn-danger btn-sm" onClick={() => deleteEmp(e.id)}>Delete</button>
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -169,43 +181,76 @@ export default function AdminPanel() {
             <h3>Edit {editing.name}</h3>
             <form className="profile-form flat" onSubmit={saveEdit}>
               {editErr && <div className="auth-error">{editErr}</div>}
-              <label>Full name</label>
-              <input value={editForm.name} onChange={(ev) => setEditForm({ ...editForm, name: ev.target.value })} required />
-              <label>Email</label>
-              <input type="email" value={editForm.email} onChange={(ev) => setEditForm({ ...editForm, email: ev.target.value })} required />
-              <label>Phone number</label>
-              <input value={editForm.phone} onChange={(ev) => setEditForm({ ...editForm, phone: ev.target.value })} />
-              <label>Employee No.</label>
-              <input value={editForm.employeeNumber} onChange={(ev) => setEditForm({ ...editForm, employeeNumber: ev.target.value })} />
-              <label>Position</label>
-              <input value={editForm.position} onChange={(ev) => setEditForm({ ...editForm, position: ev.target.value })} />
-              <label>Department</label>
-              <select value={editForm.departmentId} onChange={(ev) => setEditForm({ ...editForm, departmentId: ev.target.value })}>
-                {departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
-              </select>
-              <label>Role</label>
-              <select value={editForm.role} onChange={(ev) => setEditForm({ ...editForm, role: ev.target.value })}>
-                <option value="employee">Employee</option>
-                <option value="admin">Admin</option>
-              </select>
-              <label>New password <span className="muted small">(leave blank to keep current)</span></label>
-              <div className="password-field">
-                <input
-                  type={showEditPw ? 'text' : 'password'}
-                  value={editForm.newPassword}
-                  onChange={(ev) => setEditForm({ ...editForm, newPassword: ev.target.value })}
-                  placeholder="••••••••"
-                />
-                <button type="button" className="eye-toggle" tabIndex={-1} onClick={() => setShowEditPw((s) => !s)}>
-                  {showEditPw ? (
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17.94 17.94A10.94 10.94 0 0 1 12 20c-7 0-11-8-11-8a20.3 20.3 0 0 1 5.06-5.94M9.9 4.24A10.9 10.9 0 0 1 12 4c7 0 11 8 11 8a20.4 20.4 0 0 1-3.22 4.36M14.12 14.12a3 3 0 1 1-4.24-4.24" /><line x1="1" y1="1" x2="23" y2="23" /></svg>
-                  ) : (
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8Z" /><circle cx="12" cy="12" r="3" /></svg>
-                  )}
-                </button>
+              <div className="form-grid">
+                <div className="form-field">
+                  <label htmlFor="edit-name">Full name</label>
+                  <input id="edit-name" value={editForm.name} onChange={(ev) => setEditForm({ ...editForm, name: ev.target.value })} required />
+                </div>
+                <div className="form-field">
+                  <label htmlFor="edit-email">Email</label>
+                  <input id="edit-email" type="email" value={editForm.email} onChange={(ev) => setEditForm({ ...editForm, email: ev.target.value })} required />
+                </div>
+                <div className="form-field">
+                  <label htmlFor="edit-phone">Phone number</label>
+                  <input id="edit-phone" value={editForm.phone} onChange={(ev) => setEditForm({ ...editForm, phone: ev.target.value })} />
+                </div>
+                <div className="form-field">
+                  <label htmlFor="edit-empno">Employee No.</label>
+                  <input id="edit-empno" value={editForm.employeeNumber} onChange={(ev) => setEditForm({ ...editForm, employeeNumber: ev.target.value })} />
+                </div>
+                <div className="form-field">
+                  <label htmlFor="edit-position">Position</label>
+                  <input id="edit-position" value={editForm.position} onChange={(ev) => setEditForm({ ...editForm, position: ev.target.value })} />
+                </div>
+                <div className="form-field">
+                  <label id="edit-dept-label">Department</label>
+                  <Select
+                    value={editForm.departmentId}
+                    onChange={(v) => setEditForm({ ...editForm, departmentId: v })}
+                    options={deptOptions}
+                    ariaLabel="Department"
+                  />
+                </div>
+                <div className="form-field full">
+                  <label>Role</label>
+                  <Select
+                    value={editForm.role}
+                    onChange={(v) => setEditForm({ ...editForm, role: v })}
+                    options={ROLE_OPTIONS}
+                    ariaLabel="Role"
+                  />
+                </div>
+                <div className="form-field full">
+                  <label htmlFor="edit-password">
+                    New password<span className="label-hint">(leave blank to keep current)</span>
+                  </label>
+                  <div className="password-field">
+                    <input
+                      id="edit-password"
+                      type={showEditPw ? 'text' : 'password'}
+                      value={editForm.newPassword}
+                      onChange={(ev) => setEditForm({ ...editForm, newPassword: ev.target.value })}
+                      placeholder="••••••••"
+                      autoComplete="new-password"
+                    />
+                    <button
+                      type="button"
+                      className="eye-toggle"
+                      tabIndex={-1}
+                      aria-label={showEditPw ? 'Hide password' : 'Show password'}
+                      onClick={() => setShowEditPw((v) => !v)}
+                    >
+                      {showEditPw ? (
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17.94 17.94A10.94 10.94 0 0 1 12 20c-7 0-11-8-11-8a20.3 20.3 0 0 1 5.06-5.94M9.9 4.24A10.9 10.9 0 0 1 12 4c7 0 11 8 11 8a20.4 20.4 0 0 1-3.22 4.36M14.12 14.12a3 3 0 1 1-4.24-4.24" /><line x1="1" y1="1" x2="23" y2="23" /></svg>
+                      ) : (
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8Z" /><circle cx="12" cy="12" r="3" /></svg>
+                      )}
+                    </button>
+                  </div>
+                </div>
               </div>
               <div className="edit-modal-actions">
-                <button type="button" className="btn-reject" onClick={() => setEditing(null)}>Cancel</button>
+                <button type="button" className="btn-secondary" onClick={() => setEditing(null)}>Cancel</button>
                 <button type="submit">Save changes</button>
               </div>
             </form>

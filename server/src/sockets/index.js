@@ -22,6 +22,29 @@ function isOnline(userId) {
   return userSockets.has(userId);
 }
 
+// Used by the meeting controller / scheduler.
+function isMeetingRoomEmpty(meetingId) {
+  const members = meetingRooms.get(Number(meetingId));
+  return !members || members.size === 0;
+}
+function clearMeetingRoom(meetingId) {
+  meetingRooms.delete(Number(meetingId));
+}
+
+// Tell every other invitee that a meeting just went live.
+async function notifyMeetingStarting(io, meeting, starter) {
+  const invited = await MeetingParticipant.findAll({ where: { meetingId: meeting.id } });
+  invited.filter((p) => p.userId !== starter.id).forEach((p) => {
+    io.to(`user:${p.userId}`).emit('meeting-starting', {
+      meeting: {
+        id: meeting.id, title: meeting.title, scheduledAt: meeting.scheduledAt,
+        callType: meeting.callType, status: meeting.status, createdBy: meeting.createdBy,
+      },
+      from: { id: starter.id, name: starter.name },
+    });
+  });
+}
+
 function initSockets(io) {
   io.use(async (socket, next) => {
     try {
@@ -157,8 +180,9 @@ function initSockets(io) {
     });
 
     // ---- Group meetings (mesh WebRTC: every participant connects to every other) ----
-    socket.on('meeting-join', async ({ meetingId }, ack) => {
+    socket.on('meeting-join', async ({ meetingId } = {}, ack) => {
       try {
+        meetingId = Number(meetingId);
         const meeting = await Meeting.findByPk(meetingId);
         if (!meeting) return ack?.({ error: 'Meeting not found' });
         if (meeting.status === 'cancelled' || meeting.status === 'ended') {
@@ -167,16 +191,25 @@ function initSockets(io) {
         const participant = await MeetingParticipant.findOne({ where: { meetingId, userId: user.id } });
         if (!participant) return ack?.({ error: 'You are not invited to this meeting' });
 
-        participant.status = 'joined';
-        await participant.save();
+        // Only the organizer can open a meeting that has not started yet;
+        // everybody else waits until it is ongoing.
         if (meeting.status === 'scheduled') {
+          if (meeting.createdBy !== user.id) {
+            return ack?.({ error: 'The host has not started this meeting yet. Please try again in a moment.' });
+          }
           meeting.status = 'ongoing';
           meeting.startedAt = meeting.startedAt || new Date();
           await meeting.save();
+          await notifyMeetingStarting(io, meeting, user);
         }
 
+        participant.status = 'joined';
+        await participant.save();
+
         const room = `meeting:${meetingId}`;
-        const existing = [...(meetingRooms.get(meetingId) || [])];
+        // Never hand back ourselves (happens when a tab is refreshed / the
+        // socket reconnects before the old one is cleaned up).
+        const existing = [...(meetingRooms.get(meetingId) || [])].filter((id) => id !== user.id);
         if (!meetingRooms.has(meetingId)) meetingRooms.set(meetingId, new Set());
         meetingRooms.get(meetingId).add(user.id);
         socket.join(room);
@@ -184,28 +217,39 @@ function initSockets(io) {
         socket.to(room).emit('meeting-peer-joined', { userId: user.id, name: user.name });
         ack?.({ ok: true, existingPeers: existing, callType: meeting.callType, title: meeting.title });
       } catch (err) {
+        console.error('meeting-join failed:', err.message);
         ack?.({ error: 'Failed to join meeting' });
       }
     });
 
-    socket.on('meeting-leave', ({ meetingId }) => {
+    socket.on('meeting-leave', ({ meetingId } = {}) => {
+      meetingId = Number(meetingId);
       meetingRooms.get(meetingId)?.delete(user.id);
       socket.leave(`meeting:${meetingId}`);
       socket.to(`meeting:${meetingId}`).emit('meeting-peer-left', { userId: user.id });
     });
 
-    socket.on('meeting-mute-update', ({ meetingId, audioMuted, videoMuted }) => {
-      socket.to(`meeting:${meetingId}`).emit('meeting-mute-update', { userId: user.id, audioMuted, videoMuted });
+    socket.on('meeting-mute-update', ({ meetingId, audioMuted, videoMuted } = {}) => {
+      socket.to(`meeting:${Number(meetingId)}`).emit('meeting-mute-update', { userId: user.id, audioMuted, videoMuted });
     });
 
+    // WebRTC signaling relay - only between two people who are both inside the
+    // same meeting room, so a random user can't inject signaling into a call.
+    function inSameMeeting(meetingId, otherId) {
+      const members = meetingRooms.get(Number(meetingId));
+      return !!members && members.has(user.id) && members.has(Number(otherId));
+    }
     socket.on('meeting-webrtc-offer', ({ meetingId, to, offer }) => {
-      io.to(`user:${to}`).emit('meeting-webrtc-offer', { meetingId, from: user.id, offer });
+      if (!inSameMeeting(meetingId, to)) return;
+      io.to(`user:${to}`).emit('meeting-webrtc-offer', { meetingId: Number(meetingId), from: user.id, offer });
     });
     socket.on('meeting-webrtc-answer', ({ meetingId, to, answer }) => {
-      io.to(`user:${to}`).emit('meeting-webrtc-answer', { meetingId, from: user.id, answer });
+      if (!inSameMeeting(meetingId, to)) return;
+      io.to(`user:${to}`).emit('meeting-webrtc-answer', { meetingId: Number(meetingId), from: user.id, answer });
     });
     socket.on('meeting-webrtc-ice-candidate', ({ meetingId, to, candidate }) => {
-      io.to(`user:${to}`).emit('meeting-webrtc-ice-candidate', { meetingId, from: user.id, candidate });
+      if (!inSameMeeting(meetingId, to)) return;
+      io.to(`user:${to}`).emit('meeting-webrtc-ice-candidate', { meetingId: Number(meetingId), from: user.id, candidate });
     });
 
     // ---- Disconnect ----
@@ -233,4 +277,4 @@ function initSockets(io) {
   });
 }
 
-module.exports = { initSockets, isOnline };
+module.exports = { initSockets, isOnline, isMeetingRoomEmpty, clearMeetingRoom };
