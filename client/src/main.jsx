@@ -21,3 +21,13 @@ ReactDOM.createRoot(document.getElementById('root')).render(
     </AuthProvider>
   </BrowserRouter>
 );
+
+// Registering a service worker is what makes Chrome offer a real "Install
+// app" option (with Badging API / taskbar-dot support) instead of just the
+// bare "Create shortcut" window. Safe to skip in Electron or unsupported
+// browsers — feature-detected.
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').catch(() => { /* non-fatal */ });
+  });
+}

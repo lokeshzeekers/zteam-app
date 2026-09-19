@@ -1,6 +1,7 @@
 import { Outlet, useParams } from 'react-router-dom';
 import Sidebar from './Sidebar';
 import CallManager from './CallManager';
+import NotificationPrompt from './NotificationPrompt';
 import ChatWindow from '../pages/ChatWindow';
 
 export default function Layout() {
@@ -8,6 +9,7 @@ export default function Layout() {
     <div className="app-shell">
       <Sidebar />
       <main className="content">
+        <NotificationPrompt />
         <Outlet />
       </main>
       <CallManager />
