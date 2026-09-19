@@ -31,8 +31,11 @@ function createWindow() {
 
   mainWindow.loadURL(START_URL);
 
-  // Clear the blinking taskbar flag whenever the window regains focus.
-  mainWindow.on('focus', () => mainWindow.flashFrame(false));
+  // Clear the blinking taskbar flag AND the notification badge whenever the window regains focus.
+  mainWindow.on('focus', () => {
+    mainWindow.flashFrame(false);
+    clearOverlayBadge();
+  });
 
   mainWindow.on('close', (e) => {
     // Minimize to tray instead of quitting, so the app keeps receiving
@@ -48,12 +51,31 @@ function createTray() {
   const icon = nativeImage.createFromPath(path.join(__dirname, 'assets', 'icon.png'));
   tray = new Tray(icon.resize({ width: 16, height: 16 }));
   const menu = Menu.buildFromTemplate([
-    { label: 'Open Zteam', click: () => { mainWindow.show(); mainWindow.flashFrame(false); } },
+    { label: 'Open Zteam', click: () => { mainWindow.show(); mainWindow.flashFrame(false); clearOverlayBadge(); } },
     { label: 'Quit', click: () => { app.isQuiting = true; app.quit(); } },
   ]);
   tray.setToolTip('Zteam');
   tray.setContextMenu(menu);
-  tray.on('click', () => { mainWindow.show(); mainWindow.flashFrame(false); });
+  tray.on('click', () => { mainWindow.show(); mainWindow.flashFrame(false); clearOverlayBadge(); });
+}
+
+// Windows-only: a small red dot drawn directly on the taskbar icon itself
+// (same pattern Teams/Slack use for unread badges), separate from the
+// flashing — it stays visible after the flash animation ends, until you
+// actually focus the window. macOS gets the dock-badge equivalent.
+function setOverlayBadge() {
+  if (!mainWindow) return;
+  if (process.platform === 'win32') {
+    const badge = nativeImage.createFromPath(path.join(__dirname, 'assets', 'badge.png'));
+    mainWindow.setOverlayIcon(badge, 'New notification');
+  } else if (process.platform === 'darwin') {
+    app.dock.setBadge('•');
+  }
+}
+function clearOverlayBadge() {
+  if (!mainWindow) return;
+  if (process.platform === 'win32') mainWindow.setOverlayIcon(null, '');
+  else if (process.platform === 'darwin') app.dock.setBadge('');
 }
 
 app.whenReady().then(() => {
@@ -69,11 +91,11 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
 
-// ---- IPC: notifications + taskbar blink, triggered from the web UI ----
+// ---- IPC: notifications + taskbar blink + badge, triggered from the web UI ----
 ipcMain.on('notify', (event, { title, body }) => {
   if (Notification.isSupported()) {
     const n = new Notification({ title: title || 'Zteam', body: body || '' });
-    n.on('click', () => { mainWindow.show(); mainWindow.focus(); mainWindow.flashFrame(false); });
+    n.on('click', () => { mainWindow.show(); mainWindow.focus(); mainWindow.flashFrame(false); clearOverlayBadge(); });
     n.show();
   }
 });
@@ -86,8 +108,10 @@ ipcMain.on('flash-taskbar', () => {
     // Windows & Linux: blinks/flashes the taskbar icon until the window is focused
     mainWindow.flashFrame(true);
   }
+  setOverlayBadge();
 });
 
 ipcMain.on('clear-flash', () => {
   mainWindow?.flashFrame(false);
+  clearOverlayBadge();
 });

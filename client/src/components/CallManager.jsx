@@ -1,12 +1,15 @@
 import { useEffect, useRef, useState } from 'react';
 import { getSocket } from '../socket';
 import { notifyDesktop, flashTaskbar, clearFlash, playPing } from '../notify';
+import { MicIcon, MicOffIcon, VideoIcon, VideoOffIcon, LeaveIcon } from './CallIcons';
 
 const ICE_SERVERS = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
 
 export default function CallManager() {
   const [incoming, setIncoming] = useState(null); // { callerId, callerName, callType }
   const [activeCall, setActiveCall] = useState(null); // { withId, callType, status: connecting|active }
+  const [audioMuted, setAudioMuted] = useState(false);
+  const [videoOff, setVideoOff] = useState(false);
   const localVideoRef = useRef(null);
   const remoteVideoRef = useRef(null);
   const pcRef = useRef(null);
@@ -169,6 +172,22 @@ export default function CallManager() {
     localStreamRef.current?.getTracks().forEach((t) => t.stop());
     localStreamRef.current = null;
     setActiveCall(null);
+    setAudioMuted(false);
+    setVideoOff(false);
+  }
+
+  function toggleAudio() {
+    const track = localStreamRef.current?.getAudioTracks?.()[0];
+    if (!track) return;
+    track.enabled = !track.enabled;
+    setAudioMuted(!track.enabled);
+  }
+
+  function toggleVideo() {
+    const track = localStreamRef.current?.getVideoTracks?.()[0];
+    if (!track) return;
+    track.enabled = !track.enabled;
+    setVideoOff(!track.enabled);
   }
 
   // expose startCall to window so ChatWindow (a sibling route) can trigger it
@@ -189,14 +208,46 @@ export default function CallManager() {
         <div className="call-modal">
           <div className="call-modal-inner">
             <div className="call-status">{activeCall.status === 'connecting' ? 'Calling...' : 'On call'}</div>
-            {activeCall.callType === 'video' && (
-              <div className="video-grid">
-                <video ref={localVideoRef} autoPlay muted playsInline />
-                <video ref={remoteVideoRef} autoPlay playsInline />
+            {activeCall.callType === 'video' ? (
+              <div className="meeting-grid call-video-grid">
+                <div className="meeting-tile">
+                  <video ref={localVideoRef} autoPlay muted playsInline className={videoOff ? 'video-hidden' : ''} />
+                  <div className="meeting-tile-label">You {audioMuted && <MicOffIcon />}</div>
+                </div>
+                <div className="meeting-tile">
+                  <video ref={remoteVideoRef} autoPlay playsInline />
+                </div>
               </div>
+            ) : (
+              <audio ref={remoteVideoRef} autoPlay />
             )}
-            {activeCall.callType === 'audio' && <audio ref={remoteVideoRef} autoPlay />}
-            <button className="btn-reject" onClick={endCall}>End Call</button>
+
+            {/* Footer control bar — same layout/icons as the group meeting room */}
+            <div className="meeting-controls">
+              <button
+                type="button"
+                className={`meeting-control-btn ${audioMuted ? 'muted' : ''}`}
+                onClick={toggleAudio}
+                title={audioMuted ? 'Unmute microphone' : 'Mute microphone'}
+                aria-label={audioMuted ? 'Unmute microphone' : 'Mute microphone'}
+              >
+                {audioMuted ? <MicOffIcon /> : <MicIcon />}
+              </button>
+              {activeCall.callType === 'video' && (
+                <button
+                  type="button"
+                  className={`meeting-control-btn ${videoOff ? 'muted' : ''}`}
+                  onClick={toggleVideo}
+                  title={videoOff ? 'Turn camera on' : 'Turn camera off'}
+                  aria-label={videoOff ? 'Turn camera on' : 'Turn camera off'}
+                >
+                  {videoOff ? <VideoOffIcon /> : <VideoIcon />}
+                </button>
+              )}
+              <button type="button" className="meeting-pill-btn" onClick={endCall} aria-label="End call">
+                <LeaveIcon /> End Call
+              </button>
+            </div>
           </div>
         </div>
       )}

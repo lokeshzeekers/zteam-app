@@ -85,6 +85,7 @@ async function updateGroup(req, res) {
     if (!exists) await GroupMember.create({ groupId: group.id, userId: id, role: 'member' });
   }
   for (const id of removeMemberIds.map(Number)) {
+    if (id === group.createdBy) continue; // the owner can't be removed from their own group
     await GroupMember.destroy({ where: { groupId: group.id, userId: id } });
   }
 
