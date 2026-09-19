@@ -2,10 +2,12 @@ import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import api from '../api';
 import { useAuth } from '../context/AuthContext';
+import { usePresence } from '../context/PresenceContext';
 
 export default function DepartmentMembers() {
   const { id } = useParams();
   const { user } = useAuth();
+  const { isUserActive } = usePresence();
   const [members, setMembers] = useState([]);
   const [sameDept, setSameDept] = useState(false);
   const navigate = useNavigate();
@@ -34,7 +36,7 @@ export default function DepartmentMembers() {
       <div className="member-grid">
         {members.map((m) => (
           <div className="member-card" key={m.id}>
-            <div className={`avatar ${m.isActive ? 'online' : 'offline'}`}>{m.name[0].toUpperCase()}</div>
+            <div className={`avatar ${isUserActive(m.id, m.isActive) ? 'online' : 'offline'}`}>{m.name[0].toUpperCase()}</div>
             <div className="member-name">{m.name} {m.isSelf && '(you)'}</div>
             <div className="muted">{m.position || '—'}</div>
 

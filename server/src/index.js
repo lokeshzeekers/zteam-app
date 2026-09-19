@@ -7,6 +7,7 @@ const { Server } = require('socket.io');
 
 const { sequelize } = require('./models');
 const { initSockets } = require('./sockets');
+const { startMeetingScheduler } = require('./utils/meetingScheduler');
 
 const authRoutes = require('./routes/auth');
 const adminRoutes = require('./routes/admin');
@@ -14,6 +15,8 @@ const directoryRoutes = require('./routes/directory');
 const connectionRoutes = require('./routes/connections');
 const messageRoutes = require('./routes/messages');
 const fileRoutes = require('./routes/files');
+const groupRoutes = require('./routes/groups');
+const meetingRoutes = require('./routes/meetings');
 
 const app = express();
 const server = http.createServer(app);
@@ -35,6 +38,8 @@ app.use('/api/directory', directoryRoutes);
 app.use('/api/connections', connectionRoutes);
 app.use('/api/messages', messageRoutes);
 app.use('/api/files', fileRoutes);
+app.use('/api/groups', groupRoutes);
+app.use('/api/meetings', meetingRoutes);
 
 initSockets(io);
 
@@ -42,8 +47,9 @@ const PORT = process.env.PORT || 5000;
 
 async function start() {
   await sequelize.authenticate();
-  await sequelize.sync(); // creates tables if they don't exist yet
+  await sequelize.sync(); // creates tables if they don't exist yet (existing tables/columns are left untouched)
   server.listen(PORT, () => console.log(`Zteam server listening on port ${PORT}`));
+  startMeetingScheduler(io);
 }
 
 start().catch(err => {

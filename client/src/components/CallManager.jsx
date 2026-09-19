@@ -74,8 +74,36 @@ export default function CallManager() {
       flashTaskbar();
       playPing();
     };
+    const onGroupMsg = ({ message }) => {
+      notifyDesktop({ title: 'New group message', body: message.type === 'file' ? 'Sent a file' : message.content });
+      flashTaskbar();
+      playPing();
+    };
+    const onMeetingInvite = ({ meeting, from }) => {
+      notifyDesktop({ title: 'Meeting invite', body: `${from?.name || 'Someone'} invited you to "${meeting.title}"` });
+      flashTaskbar();
+      playPing();
+    };
+    const onMeetingStarting = ({ meeting, from }) => {
+      notifyDesktop({ title: 'Meeting starting now', body: `"${meeting.title}" is starting — join now` });
+      flashTaskbar();
+      playPing();
+    };
+    const onMeetingCancelled = ({ title }) => {
+      notifyDesktop({ title: 'Meeting cancelled', body: `"${title}" was cancelled` });
+    };
     socket.on('new-message', onMsg);
-    return () => socket.off('new-message', onMsg);
+    socket.on('new-group-message', onGroupMsg);
+    socket.on('meeting-invite', onMeetingInvite);
+    socket.on('meeting-starting', onMeetingStarting);
+    socket.on('meeting-cancelled', onMeetingCancelled);
+    return () => {
+      socket.off('new-message', onMsg);
+      socket.off('new-group-message', onGroupMsg);
+      socket.off('meeting-invite', onMeetingInvite);
+      socket.off('meeting-starting', onMeetingStarting);
+      socket.off('meeting-cancelled', onMeetingCancelled);
+    };
   }, []);
 
   useEffect(() => {

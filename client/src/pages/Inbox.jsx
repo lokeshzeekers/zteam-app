@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../api';
+import { usePresence } from '../context/PresenceContext';
 
 export default function Inbox() {
   const [threads, setThreads] = useState([]);
   const navigate = useNavigate();
+  const { isUserActive } = usePresence();
 
   useEffect(() => {
     api.get('/api/messages/inbox').then((r) => setThreads(r.data.threads));
@@ -17,7 +19,7 @@ export default function Inbox() {
       <div className="thread-list">
         {threads.map((t) => t.user && (
           <div key={t.user.id} className="thread-row" onClick={() => navigate(`/chat/${t.user.id}`)}>
-            <div className={`avatar ${t.user.isActive ? 'online' : 'offline'}`}>{t.user.name[0].toUpperCase()}</div>
+            <div className={`avatar ${isUserActive(t.user.id, t.user.isActive) ? 'online' : 'offline'}`}>{t.user.name[0].toUpperCase()}</div>
             <div className="thread-row-body">
               <div className="thread-row-top">
                 <strong>{t.user.name}</strong>

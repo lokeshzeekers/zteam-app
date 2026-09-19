@@ -1,11 +1,14 @@
 import { NavLink, useNavigate } from 'react-router-dom';
 import { useEffect, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
+import { usePresence } from '../context/PresenceContext';
 import { getSocket } from '../socket';
 import api from '../api';
+import BrandMark from './BrandMark';
 
 export default function Sidebar() {
   const { user, logout, updateUser } = useAuth();
+  const { isUserActive } = usePresence();
   const navigate = useNavigate();
   const [departments, setDepartments] = useState([]);
   const [inbox, setInbox] = useState([]);
@@ -38,15 +41,22 @@ export default function Sidebar() {
 
   function toggleActive() {
     const socket = getSocket();
+    if (!socket || !socket.connected) {
+      // Socket not ready yet (e.g. right after a reload) — don't lie about the state.
+      return;
+    }
     const next = !user.isActive;
-    updateUser({ isActive: next });
-    socket?.emit(next ? 'go-active' : 'go-inactive');
+    // Ask the server first; only reflect the new state once it's actually set,
+    // so the button never shows "Active" when the toggle silently failed.
+    socket.emit(next ? 'go-active' : 'go-inactive', {}, (ack) => {
+      if (ack?.ok) updateUser({ isActive: next });
+    });
   }
 
   return (
     <aside className="sidebar">
       <div className="brand-small">
-        <div className="brand-logo small">Z</div>
+        <BrandMark size={28} />
         <span>Zteam</span>
       </div>
 
@@ -61,24 +71,27 @@ export default function Sidebar() {
         <span className="dot" /> {user.isActive ? 'Active' : 'Go Active'}
       </button>
 
-      <div className="nav-section">
+      <div className="nav-section main-nav">
         <NavLink to="/" end>Inbox</NavLink>
+        <NavLink to="/directory">Departments</NavLink>
+        <NavLink to="/groups">Groups</NavLink>
+        <NavLink to="/meetings">Meetings</NavLink>
         <NavLink to="/requests">Requests {pendingCount > 0 && <span className="badge">{pendingCount}</span>}</NavLink>
         <NavLink to="/profile">My Profile</NavLink>
         {user.role === 'admin' && <NavLink to="/admin">Admin Panel</NavLink>}
       </div>
 
-      <div className="nav-section">
+      <div className="nav-section recent-chats">
         <div className="nav-label">Recent Chats</div>
         {inbox.map((t) => t.user && (
           <button key={t.user.id} className="thread-item" onClick={() => navigate(`/chat/${t.user.id}`)}>
-            <span className={`dot-mini ${t.user.isActive ? 'online' : ''}`} />
+            <span className={`dot-mini ${isUserActive(t.user.id, t.user.isActive) ? 'online' : ''}`} />
             {t.user.name}
           </button>
         ))}
       </div>
 
-      <div className="nav-section">
+      <div className="nav-section dept-list">
         <div className="nav-label">Departments</div>
         {departments.map((d) => (
           <button key={d.id} className="thread-item" onClick={() => navigate(`/department/${d.id}`)}>
@@ -87,7 +100,14 @@ export default function Sidebar() {
         ))}
       </div>
 
-      <button className="logout-btn" onClick={() => { logout(); navigate('/login'); }}>Sign Out</button>
+      <button className="logout-btn" onClick={() => { logout(); navigate('/login'); }}>
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+          <polyline points="16 17 21 12 16 7" />
+          <line x1="21" y1="12" x2="9" y2="12" />
+        </svg>
+        Sign Out
+      </button>
     </aside>
   );
 }
