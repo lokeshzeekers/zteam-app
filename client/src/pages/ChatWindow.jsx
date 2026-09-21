@@ -4,10 +4,13 @@ import api from '../api';
 import { getSocket } from '../socket';
 import { useAuth } from '../context/AuthContext';
 import { AttachButton, FileAttachment, SendIcon } from '../components/ChatIcons';
+import BackButton from '../components/BackButton';
+import { useNotificationCenter } from '../context/NotificationCenterContext';
 
 export default function ChatWindow({ onStartCall }) {
   const { userId } = useParams();
   const { user } = useAuth();
+  const { markDMRead } = useNotificationCenter();
   const [messages, setMessages] = useState([]);
   const [text, setText] = useState('');
   const [otherUser, setOtherUser] = useState(null);
@@ -19,6 +22,7 @@ export default function ChatWindow({ onStartCall }) {
 
   useEffect(() => {
     setError('');
+    markDMRead(Number(userId));
     const load = () => api.get(`/api/messages/with/${userId}`)
       .then((r) => setMessages(r.data.messages))
       .catch((err) => setError(err?.response?.data?.error || 'Cannot load conversation'));
@@ -30,6 +34,7 @@ export default function ChatWindow({ onStartCall }) {
       if (message.senderId === Number(userId) || message.receiverId === Number(userId)) {
         // Never show the same message twice (e.g. one that also arrived via a refetch).
         setMessages((prev) => (prev.some((m) => m.id === message.id) ? prev : [...prev, message]));
+        if (message.senderId === Number(userId)) markDMRead(Number(userId)); // we're looking right at it
       }
     };
     const onRemoved = ({ userId: removedId }) => {
@@ -88,7 +93,10 @@ export default function ChatWindow({ onStartCall }) {
   return (
     <div className="chat-window">
       <div className="chat-header">
-        <strong>Conversation</strong>
+        <div className="chat-header-left">
+          <BackButton fallback="/" />
+          <strong>Conversation</strong>
+        </div>
         <div className="chat-header-actions">
           <button onClick={() => onStartCall?.(Number(userId), 'audio')}>📞 Audio</button>
           <button onClick={() => onStartCall?.(Number(userId), 'video')}>🎥 Video</button>

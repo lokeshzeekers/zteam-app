@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import api from '../api';
 import { useAuth } from '../context/AuthContext';
+import BackButton from '../components/BackButton';
 
 function EyeToggle({ show, onClick }) {
   return (
@@ -67,7 +68,10 @@ export default function Profile() {
 
   return (
     <div className="panel">
-      <h2>My Profile</h2>
+      <div className="chat-header-left" style={{ marginBottom: 12 }}>
+        <BackButton fallback="/" />
+        <h2 style={{ margin: 0 }}>My Profile</h2>
+      </div>
 
       <form className="profile-form" onSubmit={saveProfile}>
         <h3>Personal details</h3>

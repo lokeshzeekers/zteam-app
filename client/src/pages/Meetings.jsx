@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import api from '../api';
 import { useAuth } from '../context/AuthContext';
 import { getSocket } from '../socket';
+import { useNotificationCenter } from '../context/NotificationCenterContext';
 import Select from '../components/Select';
 
 const CALL_TYPE_OPTIONS = [
@@ -19,6 +20,7 @@ function toLocalInputValue(date) {
 export default function Meetings() {
   const { user } = useAuth();
   const navigate = useNavigate();
+  const { clearMeetingAlerts } = useNotificationCenter();
   const [meetings, setMeetings] = useState([]);
   const [groups, setGroups] = useState([]);
   const [candidates, setCandidates] = useState([]);
@@ -39,20 +41,28 @@ export default function Meetings() {
   useEffect(() => {
     refresh();
     api.get('/api/groups').then((r) => setGroups(r.data.groups));
+    // Being on this screen means any pending meeting alerts (new invites,
+    // meetings that just went live) are, by definition, no longer unseen.
+    clearMeetingAlerts();
     const socket = getSocket();
     const onChange = () => refresh();
-    socket?.on('meeting-invite', onChange);
+    // These two specifically represent "something new happened" — since
+    // we're already looking at the Meetings screen, immediately clear the
+    // sidebar badge again instead of letting it reappear while we're here.
+    const onAlertWhileOpen = () => { refresh(); clearMeetingAlerts(); };
+    socket?.on('meeting-invite', onAlertWhileOpen);
     socket?.on('meeting-updated', onChange);
     socket?.on('meeting-cancelled', onChange);
-    socket?.on('meeting-starting', onChange);
+    socket?.on('meeting-starting', onAlertWhileOpen);
     socket?.on('meeting-ended', onChange);
     return () => {
-      socket?.off('meeting-invite', onChange);
+      socket?.off('meeting-invite', onAlertWhileOpen);
       socket?.off('meeting-updated', onChange);
       socket?.off('meeting-cancelled', onChange);
-      socket?.off('meeting-starting', onChange);
+      socket?.off('meeting-starting', onAlertWhileOpen);
       socket?.off('meeting-ended', onChange);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function openCreate() {

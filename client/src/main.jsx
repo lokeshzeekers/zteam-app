@@ -3,6 +3,7 @@ import { BrowserRouter } from 'react-router-dom';
 import App from './App.jsx';
 import { AuthProvider } from './context/AuthContext.jsx';
 import { PresenceProvider } from './context/PresenceContext.jsx';
+import { NotificationCenterProvider } from './context/NotificationCenterContext.jsx';
 import './styles.css';
 
 ReactDOM.createRoot(document.getElementById('root')).render(
@@ -16,7 +17,9 @@ ReactDOM.createRoot(document.getElementById('root')).render(
   <BrowserRouter>
     <AuthProvider>
       <PresenceProvider>
-        <App />
+        <NotificationCenterProvider>
+          <App />
+        </NotificationCenterProvider>
       </PresenceProvider>
     </AuthProvider>
   </BrowserRouter>

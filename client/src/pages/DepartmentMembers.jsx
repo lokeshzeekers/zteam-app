@@ -4,6 +4,7 @@ import api from '../api';
 import { useAuth } from '../context/AuthContext';
 import { usePresence } from '../context/PresenceContext';
 import { getSocket } from '../socket';
+import BackButton from '../components/BackButton';
 
 export default function DepartmentMembers() {
   const { id } = useParams();
@@ -38,7 +39,12 @@ export default function DepartmentMembers() {
 
   return (
     <div className="panel">
-      <h2>Department Members {sameDept && <span className="status-pill accepted">your department</span>}</h2>
+      <div className="panel-header">
+        <div className="chat-header-left">
+          <BackButton fallback="/directory" />
+          <h2>Department Members {sameDept && <span className="status-pill accepted">your department</span>}</h2>
+        </div>
+      </div>
       <div className="member-grid">
         {members.map((m) => (
           <div className="member-card" key={m.id}>

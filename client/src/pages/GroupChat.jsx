@@ -5,10 +5,13 @@ import { getSocket } from '../socket';
 import { useAuth } from '../context/AuthContext';
 import { usePresence } from '../context/PresenceContext';
 import { AttachButton, FileAttachment, SendIcon } from '../components/ChatIcons';
+import BackButton from '../components/BackButton';
+import { useNotificationCenter } from '../context/NotificationCenterContext';
 
 export default function GroupChat() {
   const { groupId } = useParams();
   const { user } = useAuth();
+  const { markGroupRead } = useNotificationCenter();
   const { isUserActive } = usePresence();
   const navigate = useNavigate();
   const [group, setGroup] = useState(null);
@@ -34,6 +37,7 @@ export default function GroupChat() {
 
   useEffect(() => {
     setError('');
+    markGroupRead(Number(groupId));
     const loadMessages = () => api.get(`/api/groups/${groupId}/messages`).then((r) => setMessages(r.data.messages)).catch(() => {});
     loadGroup().catch(() => setError('Group not found or you are not a member'));
     loadMessages();
@@ -44,6 +48,7 @@ export default function GroupChat() {
     const handler = ({ message }) => {
       if (String(message.groupId) === String(groupId)) {
         setMessages((prev) => (prev.some((m) => m.id === message.id) ? prev : [...prev, message]));
+        markGroupRead(Number(groupId)); // we're looking right at this group
       }
     };
     // After a reconnect the server has forgotten our room: rejoin it and catch up.
@@ -163,7 +168,10 @@ export default function GroupChat() {
   return (
     <div className="chat-window">
       <div className="chat-header">
-        <strong>{group?.name || 'Group'}</strong>
+        <div className="chat-header-left">
+          <BackButton fallback="/groups" />
+          <strong>{group?.name || 'Group'}</strong>
+        </div>
         <div className="chat-header-actions">
           <button type="button" className="btn-secondary btn-sm" onClick={() => setShowMembers((s) => !s)}>
             👥 Members ({group?.members.length || 0})

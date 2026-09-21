@@ -15,6 +15,29 @@ let tray;
 // for loading the local client-dist folder if you prefer bundling the UI too.)
 const START_URL = process.env.ZTEAM_APP_URL || 'https://zteam.zeekerstech.com';
 
+let flashInterval = null;
+
+function startContinuousFlash() {
+  if (!mainWindow || process.platform === 'darwin') return;
+  // A single flashFrame(true) call is capped by Windows' own "flash count"
+  // setting (usually ~5-7 blinks) and then goes quiet even though nothing
+  // was ever seen/acknowledged. Re-triggering it on an interval keeps it
+  // visibly blinking indefinitely until the window is actually focused
+  // (mainWindow.on('focus', ...) below calls stopContinuousFlash()).
+  if (flashInterval) return; // already blinking, don't stack intervals
+  mainWindow.flashFrame(true);
+  flashInterval = setInterval(() => {
+    if (!mainWindow || mainWindow.isFocused()) { stopContinuousFlash(); return; }
+    mainWindow.flashFrame(false);
+    mainWindow.flashFrame(true);
+  }, 1000);
+}
+
+function stopContinuousFlash() {
+  if (flashInterval) { clearInterval(flashInterval); flashInterval = null; }
+  mainWindow?.flashFrame(false);
+}
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1280,
@@ -34,7 +57,7 @@ function createWindow() {
 
   // Clear the blinking taskbar flag AND the notification badge whenever the window regains focus.
   mainWindow.on('focus', () => {
-    mainWindow.flashFrame(false);
+    stopContinuousFlash();
     clearOverlayBadge();
   });
 
@@ -52,12 +75,12 @@ function createTray() {
   const icon = nativeImage.createFromPath(path.join(__dirname, 'assets', 'icon.png'));
   tray = new Tray(icon.resize({ width: 16, height: 16 }));
   const menu = Menu.buildFromTemplate([
-    { label: 'Open Zteam', click: () => { mainWindow.show(); mainWindow.flashFrame(false); clearOverlayBadge(); } },
+    { label: 'Open Zteam', click: () => { mainWindow.show(); stopContinuousFlash(); clearOverlayBadge(); } },
     { label: 'Quit', click: () => { app.isQuiting = true; app.quit(); } },
   ]);
   tray.setToolTip('Zteam');
   tray.setContextMenu(menu);
-  tray.on('click', () => { mainWindow.show(); mainWindow.flashFrame(false); clearOverlayBadge(); });
+  tray.on('click', () => { mainWindow.show(); stopContinuousFlash(); clearOverlayBadge(); });
 }
 
 // Windows-only: a small red dot drawn directly on the taskbar icon itself
@@ -104,7 +127,7 @@ app.on('window-all-closed', () => {
 ipcMain.on('notify', (event, { title, body }) => {
   if (Notification.isSupported()) {
     const n = new Notification({ title: title || 'Zteam', body: body || '' });
-    n.on('click', () => { mainWindow.show(); mainWindow.focus(); mainWindow.flashFrame(false); clearOverlayBadge(); });
+    n.on('click', () => { mainWindow.show(); mainWindow.focus(); stopContinuousFlash(); clearOverlayBadge(); });
     n.show();
   }
 });
@@ -114,13 +137,13 @@ ipcMain.on('flash-taskbar', () => {
   if (process.platform === 'darwin') {
     app.dock.bounce('critical');
   } else {
-    // Windows & Linux: blinks/flashes the taskbar icon until the window is focused
-    mainWindow.flashFrame(true);
+    // Windows & Linux: keeps re-blinking the taskbar icon until the window is focused
+    startContinuousFlash();
   }
   setOverlayBadge();
 });
 
 ipcMain.on('clear-flash', () => {
-  mainWindow?.flashFrame(false);
+  stopContinuousFlash();
   clearOverlayBadge();
 });

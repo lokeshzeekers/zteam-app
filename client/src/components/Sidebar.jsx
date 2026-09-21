@@ -2,6 +2,7 @@ import { NavLink, useNavigate } from 'react-router-dom';
 import { useEffect, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { usePresence } from '../context/PresenceContext';
+import { useNotificationCenter } from '../context/NotificationCenterContext';
 import { getSocket } from '../socket';
 import api from '../api';
 import BrandMark from './BrandMark';
@@ -9,6 +10,7 @@ import BrandMark from './BrandMark';
 export default function Sidebar() {
   const { user, logout, updateUser } = useAuth();
   const { isUserActive } = usePresence();
+  const { unreadDMCount, unreadGroupCount, meetingAlertCount } = useNotificationCenter();
   const navigate = useNavigate();
   const [departments, setDepartments] = useState([]);
   const [inbox, setInbox] = useState([]);
@@ -81,10 +83,10 @@ export default function Sidebar() {
       </button>
 
       <div className="nav-section main-nav">
-        <NavLink to="/" end>Inbox</NavLink>
+        <NavLink to="/" end>Inbox {unreadDMCount > 0 && <span className="badge">{unreadDMCount}</span>}</NavLink>
         <NavLink to="/directory">Departments</NavLink>
-        <NavLink to="/groups">Groups</NavLink>
-        <NavLink to="/meetings">Meetings</NavLink>
+        <NavLink to="/groups">Groups {unreadGroupCount > 0 && <span className="badge">{unreadGroupCount}</span>}</NavLink>
+        <NavLink to="/meetings">Meetings {meetingAlertCount > 0 && <span className="badge">{meetingAlertCount}</span>}</NavLink>
         <NavLink to="/requests">Requests {pendingCount > 0 && <span className="badge">{pendingCount}</span>}</NavLink>
         <NavLink to="/profile">My Profile</NavLink>
         {user.role === 'admin' && <NavLink to="/admin">Admin Panel</NavLink>}
