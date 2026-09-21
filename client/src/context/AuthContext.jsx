@@ -51,6 +51,20 @@ export function AuthProvider({ children }) {
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
   }, []);
 
+  useEffect(() => {
+    // Called by the Electron main process right before a REAL quit (tray "Quit",
+    // updater restart, ...). Unlike 'beforeunload' it is awaited: the app only
+    // exits once the server has acknowledged go-inactive, so the exit can't race
+    // the network send. Resolves false (quit carries on) when nothing to tell.
+    window.__zteamGoInactive = () => new Promise((resolve) => {
+      const socket = getSocket();
+      if (!socket?.connected) { resolve(false); return; }
+      const timer = setTimeout(() => resolve(false), 1200);
+      socket.emit('go-inactive', {}, () => { clearTimeout(timer); resolve(true); });
+    });
+    return () => { delete window.__zteamGoInactive; };
+  }, []);
+
   async function login(email, password) {
     const { data } = await api.post('/api/auth/login', { email, password });
     localStorage.setItem('zteam_token', data.token);

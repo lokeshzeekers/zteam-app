@@ -49,11 +49,15 @@ export function NotificationCenterProvider({ children }) {
     if (!socket) return;
 
     const onNewMessage = ({ message }) => {
+      // Not unread if you're already looking at that conversation (the chat marks
+      // it read itself, but its listener can run before this one after a reload).
+      if (window.location.pathname === `/chat/${message.senderId}`) return;
       if (message.senderId !== user.id) {
         setUnreadDMs((prev) => new Set(prev).add(message.senderId));
       }
     };
     const onNewGroupMessage = ({ message }) => {
+      if (window.location.pathname === `/groups/${message.groupId}`) return;
       if (message.senderId !== user.id) {
         setUnreadGroups((prev) => new Set(prev).add(message.groupId));
       }

@@ -15,27 +15,50 @@ let tray;
 // for loading the local client-dist folder if you prefer bundling the UI too.)
 const START_URL = process.env.ZTEAM_APP_URL || 'https://zteam.zeekerstech.com';
 
-let flashInterval = null;
+// ---- Taskbar flashing --------------------------------------------------------
+// On Windows, flashFrame(true) is FlashWindowEx(..., uCount = 4): the OS blinks
+// the taskbar button exactly 4 times, then goes quiet (button stays orange) — one
+// call can never blink "until focused". (Verified in Electron's
+// native_window_views.cc + Chromium's HWNDMessageHandler::FlashFrame.)
+// So while the window is not focused we re-arm it: STOP, a short pause so
+// Windows really processes the stop, then START a fresh 4-blink round.
+// (The previous version fired STOP and START back-to-back in the same tick, which
+// did not give a reliable restart.)
+// One repeating timer at most; everything is cleared on focus / hide / quit.
+const FLASH_REARM_MS = 2000; // how often a new blink round is started
+const FLASH_RESTART_GAP_MS = 300; // pause between the STOP and the next START
+
+let flashTimer = null;
+let flashRestartTimer = null;
+
+// A window that is hidden to the tray has no taskbar button to blink.
+function canFlash() {
+  return !!mainWindow && !mainWindow.isDestroyed()
+    && (mainWindow.isVisible() || mainWindow.isMinimized())
+    && !mainWindow.isFocused();
+}
+
+function rearmFlash() {
+  if (!canFlash()) { stopContinuousFlash(); return; }
+  mainWindow.flashFrame(false);
+  flashRestartTimer = setTimeout(() => {
+    flashRestartTimer = null;
+    if (flashTimer && canFlash()) mainWindow.flashFrame(true);
+  }, FLASH_RESTART_GAP_MS);
+}
 
 function startContinuousFlash() {
-  if (!mainWindow || process.platform === 'darwin') return;
-  // A single flashFrame(true) call is capped by Windows' own "flash count"
-  // setting (usually ~5-7 blinks) and then goes quiet even though nothing
-  // was ever seen/acknowledged. Re-triggering it on an interval keeps it
-  // visibly blinking indefinitely until the window is actually focused
-  // (mainWindow.on('focus', ...) below calls stopContinuousFlash()).
-  if (flashInterval) return; // already blinking, don't stack intervals
+  if (process.platform === 'darwin') return;
+  if (!canFlash()) return; // already looking at Zteam (or nothing to blink): don't flash
+  if (flashTimer) return; // already blinking, never stack timers
   mainWindow.flashFrame(true);
-  flashInterval = setInterval(() => {
-    if (!mainWindow || mainWindow.isFocused()) { stopContinuousFlash(); return; }
-    mainWindow.flashFrame(false);
-    mainWindow.flashFrame(true);
-  }, 1000);
+  flashTimer = setInterval(rearmFlash, FLASH_REARM_MS);
 }
 
 function stopContinuousFlash() {
-  if (flashInterval) { clearInterval(flashInterval); flashInterval = null; }
-  mainWindow?.flashFrame(false);
+  if (flashTimer) { clearInterval(flashTimer); flashTimer = null; }
+  if (flashRestartTimer) { clearTimeout(flashRestartTimer); flashRestartTimer = null; }
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.flashFrame(false);
 }
 
 function createWindow() {
@@ -121,6 +144,38 @@ app.whenReady().then(() => {
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
+});
+
+// ---- Real quit: tell the server we're inactive BEFORE the process goes away ----
+// A renderer 'beforeunload' emit races the process exit and can be lost, so the
+// main process asks the page to send 'go-inactive', waits for the server's
+// acknowledgement (max ~2s), and only then lets the quit continue.
+// Hiding to the tray never reaches this (that's just window.hide()).
+let quitState = 'idle'; // idle -> pending (waiting for the server) -> done
+
+async function goInactiveBeforeQuit() {
+  const win = mainWindow;
+  if (!win || win.isDestroyed()) return;
+  let timer;
+  try {
+    await Promise.race([
+      win.webContents.executeJavaScript('window.__zteamGoInactive ? window.__zteamGoInactive() : false'),
+      new Promise((resolve) => { timer = setTimeout(resolve, 2000); }),
+    ]);
+  } catch (e) {
+    // Page not available - the server also notices the closed connection.
+  }
+  clearTimeout(timer);
+}
+
+app.on('before-quit', (event) => {
+  app.isQuiting = true; // a real quit is underway: the close handler must not hide-to-tray instead
+  stopContinuousFlash();
+  if (quitState === 'done') return; // handshake finished: let the quit proceed
+  event.preventDefault();
+  if (quitState === 'pending') return;
+  quitState = 'pending';
+  goInactiveBeforeQuit().finally(() => { quitState = 'done'; app.quit(); });
 });
 
 // ---- IPC: notifications + taskbar blink + badge, triggered from the web UI ----

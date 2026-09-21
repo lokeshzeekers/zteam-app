@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import api from '../api';
 import { getSocket } from '../socket';
 import { usePresence } from '../context/PresenceContext';
+import { useNotificationCenter } from '../context/NotificationCenterContext';
 import { FileIcon } from '../components/ChatIcons';
 
 export default function Inbox() {
@@ -10,6 +11,7 @@ export default function Inbox() {
   const [loaded, setLoaded] = useState(false);
   const navigate = useNavigate();
   const { isUserActive } = usePresence();
+  const { isDMUnread } = useNotificationCenter();
 
   const load = useCallback(() => (
     api.get('/api/messages/inbox')
@@ -50,7 +52,11 @@ export default function Inbox() {
       )}
       <div className="thread-list">
         {threads.map((t) => t.user && (
-          <div key={t.user.id} className="thread-row" onClick={() => navigate(`/chat/${t.user.id}`)}>
+          <div
+            key={t.user.id}
+            className={`thread-row${isDMUnread(t.user.id) ? ' unread' : ''}`}
+            onClick={() => navigate(`/chat/${t.user.id}`)}
+          >
             <div className={`avatar ${isUserActive(t.user.id, t.user.isActive) ? 'online' : 'offline'}`}>{t.user.name[0].toUpperCase()}</div>
             <div className="thread-row-body">
               <div className="thread-row-top">
@@ -63,6 +69,7 @@ export default function Inbox() {
                   : t.lastMessage.content}
               </div>
             </div>
+            {isDMUnread(t.user.id) && <span className="unread-dot" title="New message" aria-label="New unread message" />}
           </div>
         ))}
       </div>

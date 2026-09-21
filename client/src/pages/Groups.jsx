@@ -2,10 +2,12 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../api';
 import { useAuth } from '../context/AuthContext';
+import { useNotificationCenter } from '../context/NotificationCenterContext';
 import { getSocket } from '../socket';
 
 export default function Groups() {
   const { user } = useAuth();
+  const { isGroupUnread } = useNotificationCenter();
   const navigate = useNavigate();
   const [groups, setGroups] = useState([]);
   const [candidates, setCandidates] = useState([]); // people you're allowed to add
@@ -84,10 +86,11 @@ export default function Groups() {
 
       <div className="member-grid">
         {groups.map((g) => (
-          <div className="member-card" key={g.id} onClick={() => navigate(`/groups/${g.id}`)} role="button" tabIndex={0}>
+          <div className={`member-card${isGroupUnread(g.id) ? ' unread' : ''}`} key={g.id} onClick={() => navigate(`/groups/${g.id}`)} role="button" tabIndex={0}>
             <div className="avatar online" style={{ background: '#16305c' }}>{g.name[0].toUpperCase()}</div>
             <div className="member-name">{g.name}</div>
             <div className="muted small">{g.members.length} member{g.members.length !== 1 ? 's' : ''}</div>
+            {isGroupUnread(g.id) && <div className="unread-tag">New messages</div>}
           </div>
         ))}
       </div>

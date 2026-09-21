@@ -190,6 +190,15 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .thread-list { display: flex; flex-direction: column; gap: 6px; }
 .thread-row { display: flex; gap: 12px; padding: 12px; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; cursor: pointer; }
 .thread-row:hover { border-color: var(--accent); }
+/* Unread conversation (Inbox rows + Groups cards): stays until the conversation is opened */
+.thread-row.unread { background: #eef4ff; border-color: #bcd3fb; box-shadow: inset 4px 0 0 var(--accent); }
+.thread-row.unread .thread-row-top strong { color: var(--accent-dark); }
+.thread-row.unread .thread-row-top .muted { color: var(--accent); font-weight: 600; }
+.thread-row.unread .thread-preview { color: var(--text); font-weight: 700; }
+.unread-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--accent); align-self: center; flex-shrink: 0; }
+.member-card.unread { background: #eef4ff; border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.member-card.unread .member-name { color: var(--accent-dark); font-weight: 700; }
+.unread-tag { margin-top: 2px; padding: 2px 10px; border-radius: 999px; background: var(--accent); color: #fff; font-size: 11px; font-weight: 700; }
 .thread-row-body { flex: 1; min-width: 0; }
 .thread-row-top { display: flex; justify-content: space-between; }
 
