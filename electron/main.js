@@ -1,4 +1,5 @@
 const { app, BrowserWindow, Notification, Tray, Menu, ipcMain, nativeImage } = require('electron');
+const { autoUpdater } = require('electron-updater');
 const path = require('path');
 
 // Windows groups/pins the app correctly in the taskbar when this is set
@@ -81,6 +82,14 @@ function clearOverlayBadge() {
 app.whenReady().then(() => {
   createWindow();
   createTray();
+
+  // Check for a newer Zteam desktop release.
+  // GitHub Releases is configured in electron/package.json.
+  if (!app.isPackaged) {
+    console.log('Auto-update check skipped in development mode.');
+  } else {
+    autoUpdater.checkForUpdatesAndNotify();
+  }
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();

@@ -18,7 +18,17 @@
   "build": {
     "appId": "com.zteam.desktop",
     "productName": "Zteam",
-    "files": ["main.js", "preload.js", "assets/**", "client-dist/**"],
+    "files": [
+      "main.js",
+      "preload.js",
+      "assets/**",
+      "client-dist/**"
+    ],
+    "publish": {
+      "provider": "github",
+      "owner": "lokeshzeekers",
+      "repo": "zteam-app"
+    },
     "win": {
       "target": ["nsis"],
       "icon": "assets/icon.ico"
