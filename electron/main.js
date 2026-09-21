@@ -12,7 +12,7 @@ let tray;
 // Set this to your Hostinger VPS domain, e.g. https://zteam.yourdomain.com
 // (The web build embeds this at build-time via VITE_API_URL; this is a fallback
 // for loading the local client-dist folder if you prefer bundling the UI too.)
-const START_URL = process.env.ZTEAM_APP_URL || `file://${path.join(__dirname, 'client-dist', 'index.html')}`;
+const START_URL = process.env.ZTEAM_APP_URL || 'https://zteam.zeekerstech.com';
 
 function createWindow() {
   mainWindow = new BrowserWindow({
