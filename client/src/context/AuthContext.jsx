@@ -1,13 +1,36 @@
-import { createContext, useContext, useEffect, useState, useCallback } from 'react';
+import { createContext, useContext, useEffect, useRef, useState, useCallback } from 'react';
 import api from '../api';
 import { connectSocket, disconnectSocket, getSocket } from '../socket';
 
 const AuthContext = createContext(null);
 
+// The ONE place that tells the server "I'm going inactive" and waits for its
+// acknowledgement. Used by the Electron quit handshake (window.__zteamGoInactive)
+// and by web Sign Out, so both go through the same code path.
+// waitForConnect: Sign Out clicked right after opening the app, while the socket is
+// still connecting - give it a moment so go-inactive is really delivered (it is sent
+// after the queued go-active, so the final state is inactive).
+function sendGoInactive({ waitForConnect = false } = {}) {
+  return new Promise((resolve) => {
+    const socket = getSocket();
+    if (!socket) { resolve(false); return; }
+    const emit = () => {
+      const timer = setTimeout(() => resolve(false), 1200);
+      socket.emit('go-inactive', {}, () => { clearTimeout(timer); resolve(true); });
+    };
+    if (socket.connected) { emit(); return; }
+    if (!waitForConnect || !socket.active) { resolve(false); return; } // not connecting: nothing to tell
+    const wait = setTimeout(() => { socket.off('connect', onConnect); resolve(false); }, 1500);
+    function onConnect() { clearTimeout(wait); emit(); }
+    socket.once('connect', onConnect);
+  });
+}
+
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [token, setToken] = useState(localStorage.getItem('zteam_token'));
   const [loading, setLoading] = useState(true);
+  const loggingOut = useRef(false);
 
   const bootstrap = useCallback(async (tok) => {
     try {
@@ -56,12 +79,7 @@ export function AuthProvider({ children }) {
     // updater restart, ...). Unlike 'beforeunload' it is awaited: the app only
     // exits once the server has acknowledged go-inactive, so the exit can't race
     // the network send. Resolves false (quit carries on) when nothing to tell.
-    window.__zteamGoInactive = () => new Promise((resolve) => {
-      const socket = getSocket();
-      if (!socket?.connected) { resolve(false); return; }
-      const timer = setTimeout(() => resolve(false), 1200);
-      socket.emit('go-inactive', {}, () => { clearTimeout(timer); resolve(true); });
-    });
+    window.__zteamGoInactive = () => sendGoInactive();
     return () => { delete window.__zteamGoInactive; };
   }, []);
 
@@ -77,13 +95,21 @@ export function AuthProvider({ children }) {
     return data.user;
   }
 
-  function logout() {
-    const socket = getSocket();
-    socket?.emit('go-inactive');
-    disconnectSocket();
-    localStorage.removeItem('zteam_token');
-    setToken(null);
-    setUser(null);
+  // Sign Out: the presence update must reach the server BEFORE the session and
+  // socket are torn down (previously go-inactive was fired and the socket closed in
+  // the same instant, so it could be lost). Guarded against double clicks.
+  async function logout() {
+    if (loggingOut.current) return;
+    loggingOut.current = true;
+    try {
+      await sendGoInactive({ waitForConnect: true });
+    } finally {
+      disconnectSocket();
+      localStorage.removeItem('zteam_token');
+      setToken(null);
+      setUser(null);
+      loggingOut.current = false;
+    }
   }
 
   function updateUser(patch) {

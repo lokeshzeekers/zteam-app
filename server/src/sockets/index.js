@@ -1,5 +1,5 @@
 const jwt = require('jsonwebtoken');
-const { User, Message, CallLog, GroupMessage, Meeting, MeetingParticipant } = require('../models');
+const { User, Message, CallLog, GroupMessage, GroupMember, Meeting, MeetingParticipant } = require('../models');
 const { canCommunicate } = require('../utils/permissions');
 const { isMember: isGroupMember } = require('../controllers/groupController');
 const { addSocket, removeSocket, isOnline } = require('../utils/presence');
@@ -231,15 +231,21 @@ function initSockets(io) {
         const message = await GroupMessage.create({
           groupId, senderId: user.id, type, content: content || null, fileUrl: fileUrl || null, fileName: fileName || null,
         });
-        io.to(`group:${groupId}`).emit('new-group-message', { message });
+        // Deliver to every CURRENT member's personal room (user:<id>), on any page and
+        // whether or not the group chat is open. Membership is read from the DB at send
+        // time, so only real members ever receive it, and removed members stop at once.
+        // One emit to a room list = each socket gets it exactly once.
+        const members = await GroupMember.findAll({ where: { groupId }, attributes: ['userId'] });
+        if (members.length) io.to(members.map((m) => `user:${m.userId}`)).emit('new-group-message', { message });
         ack?.({ message });
       } catch (err) {
         ack?.({ error: 'Failed to send message' });
       }
     });
 
-    // Join/leave the group's socket room so we actually receive its broadcasts.
-    // Membership is re-checked here too (not just on the REST endpoints).
+    // Legacy: group messages are now delivered to members' personal rooms (see
+    // send-group-message), so joining a group room is no longer needed to receive them.
+    // Kept so already-open older clients keep working. Membership is re-checked here too.
     socket.on('join-group-room', async ({ groupId }, ack) => {
       if (!(await isGroupMember(groupId, user.id))) return ack?.({ error: 'Not a member of this group' });
       socket.join(`group:${groupId}`);
@@ -346,8 +352,16 @@ function initSockets(io) {
             io.to(p.callerSocketId).emit('call-unavailable', { calleeId: user.id, reason: 'offline' });
           }
         }
-        // ...and everyone stops seeing them as active.
-        io.emit('presence-update', { userId: user.id, isActive: false });
+        // ...and everyone stops seeing them as active - unless they already signed out /
+        // went inactive (everyone was told then), or they reconnected in the meantime.
+        let stillActive = true;
+        try {
+          const row = await User.findByPk(user.id, { attributes: ['isActive'] });
+          stillActive = !!row?.isActive;
+        } catch (err) { /* broadcast anyway */ }
+        if (stillActive && !isOnline(user.id)) {
+          io.emit('presence-update', { userId: user.id, isActive: false });
+        }
       }
       // NOTE: we intentionally do NOT flip isActive to false here anymore.
       // isActive is a user-controlled status (the "Go Active" button), not a

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { getSocket } from '../socket';
 import { notifyDesktop, closeNotification, flashTaskbar, clearFlash, playPing } from '../notify';
 import { MicIcon, MicOffIcon, VideoIcon, VideoOffIcon, LeaveIcon } from './CallIcons';
+import { useAuth } from '../context/AuthContext';
 
 const ICE_SERVERS = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
 const callTag = (callerId) => `zteam-call-${callerId}`;
@@ -26,6 +27,9 @@ async function getMedia(callType) {
 }
 
 export default function CallManager() {
+  const { user } = useAuth();
+  const meRef = useRef(user?.id);
+  meRef.current = user?.id;
   const [incoming, setIncoming] = useState(null); // { callerId, callerName, callType }
   const [activeCall, setActiveCall] = useState(null); // { withId, callType, status: calling|connecting|active }
   const [audioMuted, setAudioMuted] = useState(false);
@@ -229,6 +233,7 @@ export default function CallManager() {
       playPing();
     };
     const onGroupMsg = ({ message }) => {
+      if (message.senderId === meRef.current) return; // your own message (your other devices receive it too)
       notifyDesktop({ title: 'New group message', body: message.type === 'file' ? 'Sent a file' : message.content });
       flashTaskbar();
       playPing();
