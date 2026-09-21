@@ -1,0 +1,62 @@
+name: Deploy Zteam to VPS
+
+on:
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: zteam-production
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    name: Deploy to Production VPS
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.2.2
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script_stop: true
+          script: |
+            set -e
+
+            echo "=== Updating Zteam source ==="
+            cd /home/zteam/apps/zteam-app
+            git fetch origin main
+            git reset --hard origin/main
+
+            echo "=== Installing server dependencies ==="
+            cd /home/zteam/apps/zteam-app/server
+            npm ci
+
+            echo "=== Installing client dependencies ==="
+            cd /home/zteam/apps/zteam-app/client
+            npm ci
+
+            echo "=== Building client ==="
+            npm run build
+
+            echo "=== Publishing client ==="
+            rm -rf /var/www/zteam/*
+            cp -a /home/zteam/apps/zteam-app/client/dist/. /var/www/zteam/
+
+            echo "=== Restarting backend ==="
+            pm2 restart zteam-server --update-env
+
+            echo "=== Checking PM2 ==="
+            pm2 status
+
+            echo "=== Checking production API ==="
+            sleep 3
+            curl -fsS https://zteam.zeekerstech.com/api/health
+
+            echo ""
+            echo "=== Deployment successful ==="
