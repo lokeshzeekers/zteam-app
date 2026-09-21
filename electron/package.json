@@ -3,7 +3,11 @@
   "version": "1.0.1",
   "description": "Zteam - internal team communication desktop app",
   "main": "main.js",
-  "author": "Zteam",
+  "author": {
+    "name": "Zteam",
+    "email": "director@zeekerstech.com"
+  },
+  "homepage": "https://zteam.zeekerstech.com",
   "scripts": {
     "start": "electron .",
     "dist": "electron-builder"
@@ -38,10 +42,11 @@
       "icon": "assets/icon.icns"
     },
     "linux": {
-      "target": ["AppImage", "deb"],
-      "icon": "assets/icon.png",
-      "category": "Network"
-    },
+  "target": ["AppImage", "deb"],
+  "icon": "assets/icon.png",
+  "category": "Network",
+  "maintainer": "Zteam <director@zeekerstech.com>"
+},
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
