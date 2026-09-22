@@ -41,6 +41,7 @@ export default function Inbox() {
     socket?.on('new-message', load);
     socket?.on('message-sent', load);
     socket?.on('user-removed', load);
+    socket?.on('conversation-cleared', load);
     socket?.on('connect', load);
     const onVisible = () => { if (document.visibilityState === 'visible') load(); };
     document.addEventListener('visibilitychange', onVisible);
@@ -49,6 +50,7 @@ export default function Inbox() {
       socket?.off('new-message', load);
       socket?.off('message-sent', load);
       socket?.off('user-removed', load);
+      socket?.off('conversation-cleared', load);
       socket?.off('connect', load);
       document.removeEventListener('visibilitychange', onVisible);
       window.removeEventListener('focus', load);

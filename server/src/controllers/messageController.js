@@ -12,17 +12,21 @@ async function getConversation(req, res) {
   const allowed = await canCommunicate(me, other);
   if (!allowed) return res.status(403).json({ error: 'Not connected with this user yet' });
 
-  const messages = await Message.findAll({
-    where: {
-      deletedAt: null,
-      [Op.or]: [
-        { senderId: me.id, receiverId: otherId },
-        { senderId: otherId, receiverId: me.id },
-      ],
-    },
-    order: [['createdAt', 'ASC']],
-    limit: 500,
-  });
+  // Same per-user clear as the inbox (see listInbox): messages from at/before my own
+  // clear point are hidden from ME ONLY. Enforced here, server-side, so every entry
+  // point that opens this conversation - Recent Chats, Department -> person, Inbox -
+  // goes through this one query and can't be bypassed by calling the API directly.
+  const clear = await ConversationClear.findOne({ where: { userId: me.id, otherUserId: otherId } });
+  const where = {
+    deletedAt: null,
+    [Op.or]: [
+      { senderId: me.id, receiverId: otherId },
+      { senderId: otherId, receiverId: me.id },
+    ],
+  };
+  if (clear) where.createdAt = { [Op.gt]: clear.clearedAt };
+
+  const messages = await Message.findAll({ where, order: [['createdAt', 'ASC']], limit: 500 });
 
   // mark incoming as read
   await Message.update(
@@ -87,6 +91,10 @@ async function clearConversation(req, res) {
   });
   row.clearedAt = new Date();
   await row.save();
+  // Tell every OTHER open session of mine (another tab/device) this thread is gone
+  // from Recent Chats too - the same targeted-room pattern already used for
+  // messages-deleted / user-removed, so no new sync mechanism is introduced.
+  req.app.get('io')?.to(`user:${me.id}`).emit('conversation-cleared', { otherUserId: otherId });
   res.json({ success: true });
 }
 

@@ -37,6 +37,7 @@ export default function Sidebar() {
     socket.on('new-message', onNewMessage);
     socket.on('message-sent', onNewMessage);
     socket.on('user-removed', onRemoved);
+    socket.on('conversation-cleared', onNewMessage); // Inbox delete - possibly from another tab/device
     socket.on('connect', onNewMessage); // catch up after a reconnect
     socket.on('connection-request', onConnReq);
     socket.on('connection-response', onConnReq);
@@ -44,6 +45,7 @@ export default function Sidebar() {
       socket.off('new-message', onNewMessage);
       socket.off('message-sent', onNewMessage);
       socket.off('user-removed', onRemoved);
+      socket.off('conversation-cleared', onNewMessage);
       socket.off('connect', onNewMessage);
       socket.off('connection-request', onConnReq);
       socket.off('connection-response', onConnReq);
