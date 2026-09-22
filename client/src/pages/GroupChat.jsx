@@ -4,7 +4,7 @@ import api from '../api';
 import { getSocket } from '../socket';
 import { useAuth } from '../context/AuthContext';
 import { usePresence } from '../context/PresenceContext';
-import { AttachButton, FileAttachment, SendIcon, TrashIcon, PhoneIncomingIcon, PhoneMissedIcon, PhoneXIcon } from '../components/ChatIcons';
+import { AttachButton, FileAttachment, SendIcon, TrashIcon, CheckSquareIcon, PhoneIncomingIcon, PhoneMissedIcon, PhoneXIcon } from '../components/ChatIcons';
 import BackButton from '../components/BackButton';
 import { useNotificationCenter } from '../context/NotificationCenterContext';
 
@@ -263,11 +263,19 @@ export default function GroupChat() {
             👥 Members ({group?.members.length || 0})
           </button>
           <button type="button" className="btn-secondary btn-sm" onClick={startMeetingNow} title="Start a group video meeting now">🎥 Start Meeting</button>
-          <button type="button" className="btn-secondary btn-sm" onClick={toggleSelecting}>{selecting ? 'Cancel' : 'Select'}</button>
+          <button
+            type="button"
+            className={`icon-btn-sm${selecting ? ' active' : ''}`}
+            onClick={toggleSelecting}
+            title={selecting ? 'Cancel selection' : 'Select messages'}
+            aria-label={selecting ? 'Cancel selection' : 'Select messages'}
+          >
+            <CheckSquareIcon size={19} />
+          </button>
           {isOwner && <button type="button" className="btn-secondary btn-sm" onClick={openEdit}>Edit</button>}
           {isOwner && <button type="button" className="btn-danger btn-sm" onClick={deleteGroup}>Delete</button>}
-          <button type="button" className="icon-btn-sm" onClick={hideGroupForMe} title="Remove from my list" aria-label="Remove from my list">
-            <TrashIcon size={16} />
+          <button type="button" className="icon-btn-sm danger" onClick={hideGroupForMe} title="Remove from my list" aria-label="Remove from my list">
+            <TrashIcon size={19} />
           </button>
         </div>
       </div>

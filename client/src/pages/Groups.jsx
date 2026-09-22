@@ -105,12 +105,12 @@ export default function Groups() {
             {isGroupUnread(g.id) && <div className="unread-tag">New messages</div>}
             <button
               type="button"
-              className="icon-btn-sm group-hide-btn"
+              className="icon-btn-sm danger group-hide-btn"
               onClick={(e) => hideGroup(e, g.id, g.name)}
               title="Remove from my list"
               aria-label={`Remove ${g.name} from my list`}
             >
-              <TrashIcon size={15} />
+              <TrashIcon size={19} />
             </button>
           </div>
         ))}

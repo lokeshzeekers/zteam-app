@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import api from '../api';
 import { getSocket } from '../socket';
 import { useAuth } from '../context/AuthContext';
-import { AttachButton, FileAttachment, SendIcon, TrashIcon, PhoneIncomingIcon, PhoneMissedIcon, PhoneXIcon } from '../components/ChatIcons';
+import { AttachButton, FileAttachment, SendIcon, TrashIcon, PhoneIcon, VideoIcon, CheckSquareIcon, PhoneIncomingIcon, PhoneMissedIcon, PhoneXIcon } from '../components/ChatIcons';
 import BackButton from '../components/BackButton';
 import { useNotificationCenter } from '../context/NotificationCenterContext';
 
@@ -178,13 +178,35 @@ export default function ChatWindow({ onStartCall }) {
           <strong>Conversation</strong>
         </div>
         <div className="chat-header-actions">
-          <button onClick={() => onStartCall?.(Number(userId), 'audio')}>📞 Audio</button>
-          <button onClick={() => onStartCall?.(Number(userId), 'video')}>🎥 Video</button>
-          <button type="button" className="btn-secondary btn-sm" onClick={toggleSelecting}>
-            {selecting ? 'Cancel' : 'Select'}
+          <button
+            type="button"
+            className="icon-btn-sm"
+            onClick={() => onStartCall?.(Number(userId), 'audio')}
+            title="Audio call"
+            aria-label="Audio call"
+          >
+            <PhoneIcon size={19} />
           </button>
-          <button type="button" className="icon-btn-sm" onClick={deleteConversation} title="Delete conversation" aria-label="Delete conversation">
-            <TrashIcon size={16} />
+          <button
+            type="button"
+            className="icon-btn-sm"
+            onClick={() => onStartCall?.(Number(userId), 'video')}
+            title="Video call"
+            aria-label="Video call"
+          >
+            <VideoIcon size={19} />
+          </button>
+          <button
+            type="button"
+            className={`icon-btn-sm${selecting ? ' active' : ''}`}
+            onClick={toggleSelecting}
+            title={selecting ? 'Cancel selection' : 'Select messages'}
+            aria-label={selecting ? 'Cancel selection' : 'Select messages'}
+          >
+            <CheckSquareIcon size={19} />
+          </button>
+          <button type="button" className="icon-btn-sm danger" onClick={deleteConversation} title="Delete conversation" aria-label="Delete conversation">
+            <TrashIcon size={19} />
           </button>
         </div>
       </div>

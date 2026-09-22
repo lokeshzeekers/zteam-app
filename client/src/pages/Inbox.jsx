@@ -83,12 +83,12 @@ export default function Inbox() {
             {isDMUnread(t.user.id) && <span className="unread-dot" title="New message" aria-label="New unread message" />}
             <button
               type="button"
-              className="icon-btn-sm thread-delete-btn"
+              className="icon-btn-sm danger thread-delete-btn"
               onClick={(e) => deleteConversation(e, t.user.id)}
               title="Delete conversation"
               aria-label={`Delete conversation with ${t.user.name}`}
             >
-              <TrashIcon size={15} />
+              <TrashIcon size={19} />
             </button>
           </div>
         ))}
