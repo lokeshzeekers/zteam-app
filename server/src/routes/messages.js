@@ -5,5 +5,7 @@ const ctrl = require('../controllers/messageController');
 router.use(requireAuth);
 router.get('/inbox', ctrl.listInbox);
 router.get('/with/:userId', ctrl.getConversation);
+router.delete('/with/:userId', ctrl.clearConversation);
+router.post('/delete', ctrl.deleteMessages);
 
 module.exports = router;

@@ -4,7 +4,7 @@ import api from '../api';
 import { getSocket } from '../socket';
 import { usePresence } from '../context/PresenceContext';
 import { useNotificationCenter } from '../context/NotificationCenterContext';
-import { FileIcon } from '../components/ChatIcons';
+import { FileIcon, TrashIcon } from '../components/ChatIcons';
 
 export default function Inbox() {
   const [threads, setThreads] = useState([]);
@@ -12,6 +12,17 @@ export default function Inbox() {
   const navigate = useNavigate();
   const { isUserActive } = usePresence();
   const { isDMUnread } = useNotificationCenter();
+
+  async function deleteConversation(e, otherUserId) {
+    e.stopPropagation(); // don't also navigate into the chat
+    if (!confirm('Delete this conversation from your chat list? The other person keeps their copy.')) return;
+    try {
+      await api.delete(`/api/messages/with/${otherUserId}`);
+      setThreads((prev) => prev.filter((t) => t.user?.id !== otherUserId));
+    } catch (err) {
+      alert(err?.response?.data?.error || 'Could not delete the conversation');
+    }
+  }
 
   const load = useCallback(() => (
     api.get('/api/messages/inbox')
@@ -70,6 +81,15 @@ export default function Inbox() {
               </div>
             </div>
             {isDMUnread(t.user.id) && <span className="unread-dot" title="New message" aria-label="New unread message" />}
+            <button
+              type="button"
+              className="icon-btn-sm thread-delete-btn"
+              onClick={(e) => deleteConversation(e, t.user.id)}
+              title="Delete conversation"
+              aria-label={`Delete conversation with ${t.user.name}`}
+            >
+              <TrashIcon size={15} />
+            </button>
           </div>
         ))}
       </div>

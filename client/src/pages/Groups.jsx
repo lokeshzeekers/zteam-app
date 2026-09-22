@@ -4,6 +4,7 @@ import api from '../api';
 import { useAuth } from '../context/AuthContext';
 import { useNotificationCenter } from '../context/NotificationCenterContext';
 import { getSocket } from '../socket';
+import { TrashIcon } from '../components/ChatIcons';
 
 export default function Groups() {
   const { user } = useAuth();
@@ -53,6 +54,17 @@ export default function Groups() {
     setSelected((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]));
   }
 
+  async function hideGroup(e, groupId, name) {
+    e.stopPropagation(); // don't also navigate into the group
+    if (!confirm(`Remove "${name}" from your Groups list? You'll stay a member — it just won't show here unless there's new activity.`)) return;
+    try {
+      await api.post(`/api/groups/${groupId}/hide`);
+      setGroups((prev) => prev.filter((g) => g.id !== groupId));
+    } catch (err) {
+      alert(err?.response?.data?.error || 'Could not remove this group from your list');
+    }
+  }
+
   async function createGroup(e) {
     e.preventDefault();
     if (!name.trim()) return;
@@ -91,6 +103,15 @@ export default function Groups() {
             <div className="member-name">{g.name}</div>
             <div className="muted small">{g.members.length} member{g.members.length !== 1 ? 's' : ''}</div>
             {isGroupUnread(g.id) && <div className="unread-tag">New messages</div>}
+            <button
+              type="button"
+              className="icon-btn-sm group-hide-btn"
+              onClick={(e) => hideGroup(e, g.id, g.name)}
+              title="Remove from my list"
+              aria-label={`Remove ${g.name} from my list`}
+            >
+              <TrashIcon size={15} />
+            </button>
           </div>
         ))}
       </div>

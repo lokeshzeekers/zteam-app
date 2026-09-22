@@ -1,4 +1,5 @@
-const { Group, GroupMember, GroupMessage, User } = require('../models');
+const { Op } = require('sequelize');
+const { Group, GroupMember, GroupMessage, User, GroupHide } = require('../models');
 const { canCommunicate } = require('../utils/permissions');
 const { isPresent } = require('../utils/presence');
 
@@ -38,8 +39,20 @@ async function listMyGroups(req, res) {
   const groupIds = memberships.map((m) => m.groupId);
   const groups = await Group.findAll({ where: { id: groupIds }, order: [['name', 'ASC']] });
 
+  const hides = await GroupHide.findAll({ where: { userId: req.user.id, groupId: groupIds } });
+  const hiddenAtByGroup = Object.fromEntries(hides.map((h) => [h.groupId, h.hiddenAt]));
+
   const result = [];
   for (const g of groups) {
+    const hiddenAt = hiddenAtByGroup[g.id];
+    if (hiddenAt) {
+      // Hidden unless there's been a new message since the user hid it —
+      // same "comes back on new activity" rule as a cleared DM conversation.
+      const newerMessage = await GroupMessage.findOne({
+        where: { groupId: g.id, deletedAt: null, createdAt: { [Op.gt]: hiddenAt } },
+      });
+      if (!newerMessage) continue;
+    }
     const members = await GroupMember.findAll({ where: { groupId: g.id } });
     const users = await User.findAll({ where: { id: members.map((m) => m.userId) } });
     result.push({
@@ -109,8 +122,52 @@ async function deleteGroup(req, res) {
 async function getGroupMessages(req, res) {
   const groupId = req.params.id;
   if (!(await isMember(groupId, req.user.id))) return res.status(403).json({ error: 'Not a member of this group' });
-  const messages = await GroupMessage.findAll({ where: { groupId }, order: [['createdAt', 'ASC']], limit: 500 });
+  const messages = await GroupMessage.findAll({ where: { groupId, deletedAt: null }, order: [['createdAt', 'ASC']], limit: 500 });
   res.json({ messages });
 }
 
-module.exports = { createGroup, listMyGroups, getGroup, updateGroup, deleteGroup, getGroupMessages, isMember };
+// Hide this group from MY Groups list only — does not touch membership,
+// other members, or the group's shared history in any way.
+async function hideGroup(req, res) {
+  const groupId = req.params.id;
+  if (!(await isMember(groupId, req.user.id))) return res.status(403).json({ error: 'Not a member of this group' });
+  const [row] = await GroupHide.findOrCreate({
+    where: { userId: req.user.id, groupId },
+    defaults: { hiddenAt: new Date() },
+  });
+  row.hiddenAt = new Date();
+  await row.save();
+  res.json({ success: true });
+}
+
+// Bulk-delete one or more of MY OWN messages in a group. Any current member
+// can delete their own messages; nobody can delete someone else's — there is
+// no existing group-admin/moderator permission over other members' messages
+// to extend here, so this intentionally stays sender-only for everyone,
+// owners included.
+async function deleteGroupMessages(req, res) {
+  const groupId = req.params.id;
+  if (!(await isMember(groupId, req.user.id))) return res.status(403).json({ error: 'Not a member of this group' });
+
+  const ids = (req.body.messageIds || []).map(Number).filter(Boolean);
+  if (ids.length === 0) return res.status(400).json({ error: 'No messages specified' });
+
+  const messages = await GroupMessage.findAll({ where: { id: ids, groupId } });
+  const notOwned = messages.filter((m) => m.senderId !== req.user.id);
+  if (notOwned.length > 0) {
+    return res.status(403).json({ error: 'You can only delete your own messages' });
+  }
+  if (messages.length === 0) return res.json({ success: true, deletedIds: [] });
+
+  const deletedIds = messages.map((m) => m.id);
+  await GroupMessage.update({ deletedAt: new Date() }, { where: { id: deletedIds } });
+
+  req.app.get('io').to(`group:${groupId}`).emit('group-messages-deleted', { groupId: Number(groupId), messageIds: deletedIds });
+
+  res.json({ success: true, deletedIds });
+}
+
+module.exports = {
+  createGroup, listMyGroups, getGroup, updateGroup, deleteGroup, getGroupMessages, isMember,
+  hideGroup, deleteGroupMessages,
+};

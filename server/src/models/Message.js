@@ -11,6 +11,7 @@ Message.init({
   fileUrl: { type: DataTypes.STRING, allowNull: true },
   fileName: { type: DataTypes.STRING, allowNull: true },
   readAt: { type: DataTypes.DATE, allowNull: true },
+  deletedAt: { type: DataTypes.DATE, allowNull: true },
 }, { sequelize, modelName: 'message', tableName: 'messages' });
 
 module.exports = Message;

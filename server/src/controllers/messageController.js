@@ -1,5 +1,5 @@
 const { Op } = require('sequelize');
-const { Message, User } = require('../models');
+const { Message, User, ConversationClear } = require('../models');
 const { canCommunicate } = require('../utils/permissions');
 const { isPresent } = require('../utils/presence');
 
@@ -14,6 +14,7 @@ async function getConversation(req, res) {
 
   const messages = await Message.findAll({
     where: {
+      deletedAt: null,
       [Op.or]: [
         { senderId: me.id, receiverId: otherId },
         { senderId: otherId, receiverId: me.id },
@@ -36,10 +37,13 @@ async function getConversation(req, res) {
 async function listInbox(req, res) {
   const me = req.user;
   const messages = await Message.findAll({
-    where: { [Op.or]: [{ senderId: me.id }, { receiverId: me.id }] },
+    where: { deletedAt: null, [Op.or]: [{ senderId: me.id }, { receiverId: me.id }] },
     order: [['createdAt', 'DESC']],
     limit: 500,
   });
+
+  const clears = await ConversationClear.findAll({ where: { userId: me.id } });
+  const clearedAtByOther = Object.fromEntries(clears.map((c) => [c.otherUserId, c.clearedAt]));
 
   const seen = new Set();
   const threads = [];
@@ -47,6 +51,11 @@ async function listInbox(req, res) {
     const otherId = m.senderId === me.id ? m.receiverId : m.senderId;
     if (seen.has(otherId)) continue;
     seen.add(otherId);
+    // "Deleted" a conversation just hides it until something new happens —
+    // if the most recent message is older than (or equal to) when this user
+    // cleared it, the thread stays out of their inbox.
+    const clearedAt = clearedAtByOther[otherId];
+    if (clearedAt && new Date(m.createdAt) <= new Date(clearedAt)) continue;
     threads.push({ otherUserId: otherId, lastMessage: m });
   }
 
@@ -67,4 +76,46 @@ async function listInbox(req, res) {
   });
 }
 
-module.exports = { getConversation, listInbox };
+// Delete/hide this conversation from MY inbox only. Never touches the other
+// participant's view or the shared message rows.
+async function clearConversation(req, res) {
+  const me = req.user;
+  const otherId = Number(req.params.userId);
+  const [row] = await ConversationClear.findOrCreate({
+    where: { userId: me.id, otherUserId: otherId },
+    defaults: { clearedAt: new Date() },
+  });
+  row.clearedAt = new Date();
+  await row.save();
+  res.json({ success: true });
+}
+
+// Bulk-delete one or more of MY OWN messages in a DM conversation. Soft
+// delete (deletedAt) so ids/ordering stay stable and both sides' clients
+// can be told exactly which ones disappeared.
+async function deleteMessages(req, res) {
+  const me = req.user;
+  const ids = (req.body.messageIds || []).map(Number).filter(Boolean);
+  if (ids.length === 0) return res.status(400).json({ error: 'No messages specified' });
+
+  const messages = await Message.findAll({ where: { id: ids } });
+  const notOwned = messages.filter((m) => m.senderId !== me.id);
+  if (notOwned.length > 0) {
+    return res.status(403).json({ error: 'You can only delete your own messages' });
+  }
+  if (messages.length === 0) return res.json({ success: true, deletedIds: [] });
+
+  const now = new Date();
+  await Message.update({ deletedAt: now }, { where: { id: messages.map((m) => m.id) } });
+
+  // Both participants could be spread across the same conversation; notify both.
+  const otherIds = [...new Set(messages.map((m) => (m.senderId === me.id ? m.receiverId : m.senderId)))];
+  const io = req.app.get('io');
+  const deletedIds = messages.map((m) => m.id);
+  io.to(`user:${me.id}`).emit('messages-deleted', { messageIds: deletedIds, otherUserId: otherIds[0] });
+  otherIds.forEach((id) => io.to(`user:${id}`).emit('messages-deleted', { messageIds: deletedIds, otherUserId: me.id }));
+
+  res.json({ success: true, deletedIds });
+}
+
+module.exports = { getConversation, listInbox, clearConversation, deleteMessages };

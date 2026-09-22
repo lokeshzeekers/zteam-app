@@ -9,5 +9,7 @@ router.get('/:id', ctrl.getGroup);
 router.put('/:id', ctrl.updateGroup);
 router.delete('/:id', ctrl.deleteGroup);
 router.get('/:id/messages', ctrl.getGroupMessages);
+router.post('/:id/messages/delete', ctrl.deleteGroupMessages);
+router.post('/:id/hide', ctrl.hideGroup);
 
 module.exports = router;

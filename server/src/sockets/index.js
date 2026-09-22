@@ -26,6 +26,13 @@ function clearActive(userId) {
   return c;
 }
 
+// Lets an open chat between these two people know their call history changed
+// (missed / connected / declined), so it can refetch and show it inline
+// without the user needing to reopen the conversation.
+function notifyCallLogUpdate(io, userIds) {
+  userIds.forEach((id) => io.to(`user:${id}`).emit('call-log-updated', {}));
+}
+
 // Used by the meeting controller / scheduler.
 function isMeetingRoomEmpty(meetingId) {
   const members = meetingRooms.get(Number(meetingId));
@@ -153,21 +160,33 @@ function initSockets(io) {
 
       const key = `${user.id}>${calleeId}`;
       takePending(key); // re-dialling replaces any earlier ring
-      const timer = setTimeout(() => {
+
+      // Logged the moment it actually starts ringing — defaults to 'missed'
+      // and only gets upgraded to 'completed'/'rejected' below, so a call
+      // that's never answered is correctly left as a missed call.
+      const callLog = await CallLog.create({
+        callerId: user.id, calleeId, callType: callType || 'audio', status: 'missed', startedAt: new Date(),
+      });
+
+      const timer = setTimeout(async () => {
         const p = takePending(key);
         if (!p) return;
         // Nobody picked up: stop ringing on every device of the callee, tell the caller.
         io.to(`user:${calleeId}`).emit('call-ended', { by: user.id, reason: 'missed' });
         io.to(p.callerSocketId).emit('call-ended', { by: calleeId, reason: 'no-answer' });
+        if (p.callLogId) {
+          await CallLog.update({ endedAt: new Date() }, { where: { id: p.callLogId } });
+          notifyCallLogUpdate(io, [user.id, calleeId]);
+        }
       }, CALL_RING_MS);
-      pendingCalls.set(key, { callerId: user.id, calleeId, callType: callType || 'audio', callerSocketId: socket.id, timer });
+      pendingCalls.set(key, { callerId: user.id, calleeId, callType: callType || 'audio', callerSocketId: socket.id, timer, callLogId: callLog.id });
 
       io.to(`user:${calleeId}`).emit('incoming-call', {
         callerId: user.id, callerName: user.name, callType: callType || 'audio',
       });
     });
 
-    socket.on('call-accept', ({ callerId } = {}) => {
+    socket.on('call-accept', async ({ callerId } = {}) => {
       callerId = Number(callerId);
       const p = takePending(`${callerId}>${user.id}`);
       // Call was cancelled, timed out or already answered on another device.
@@ -177,8 +196,8 @@ function initSockets(io) {
       }
       // Bind the call to these two exact sockets so media signalling never
       // reaches the callee's other tabs / apps.
-      activeCalls.set(user.id, { withId: callerId, mySocketId: socket.id, peerSocketId: p.callerSocketId });
-      activeCalls.set(callerId, { withId: user.id, mySocketId: p.callerSocketId, peerSocketId: socket.id });
+      activeCalls.set(user.id, { withId: callerId, mySocketId: socket.id, peerSocketId: p.callerSocketId, callLogId: p.callLogId });
+      activeCalls.set(callerId, { withId: user.id, mySocketId: p.callerSocketId, peerSocketId: socket.id, callLogId: p.callLogId });
       io.to(p.callerSocketId).emit('call-accepted', { by: user.id });
       // Stop ringing on the callee's other devices.
       socket.to(`user:${user.id}`).emit('call-ended', { by: callerId, reason: 'answered-elsewhere' });
@@ -187,28 +206,44 @@ function initSockets(io) {
         takePending(`${other.callerId}>${other.calleeId}`);
         io.to(other.callerSocketId).emit('call-unavailable', { calleeId: user.id, reason: 'busy' });
       }
+      if (p.callLogId) {
+        await CallLog.update({ status: 'completed' }, { where: { id: p.callLogId } });
+        notifyCallLogUpdate(io, [user.id, callerId]);
+      }
     });
 
-    socket.on('call-reject', ({ callerId } = {}) => {
+    socket.on('call-reject', async ({ callerId } = {}) => {
       callerId = Number(callerId);
       const p = takePending(`${callerId}>${user.id}`);
       if (!p) return;
       io.to(p.callerSocketId).emit('call-rejected', { by: user.id });
       socket.to(`user:${user.id}`).emit('call-ended', { by: callerId, reason: 'declined-elsewhere' });
+      if (p.callLogId) {
+        await CallLog.update({ status: 'rejected', endedAt: new Date() }, { where: { id: p.callLogId } });
+        notifyCallLogUpdate(io, [user.id, callerId]);
+      }
     });
 
-    socket.on('call-end', ({ otherUserId } = {}) => {
+    socket.on('call-end', async ({ otherUserId } = {}) => {
       otherUserId = Number(otherUserId);
       // Caller hanging up while it is still ringing -> stop it everywhere.
       const ringing = takePending(`${user.id}>${otherUserId}`);
       if (ringing) {
         io.to(`user:${otherUserId}`).emit('call-ended', { by: user.id, reason: 'cancelled' });
+        if (ringing.callLogId) {
+          await CallLog.update({ endedAt: new Date() }, { where: { id: ringing.callLogId } }); // stays 'missed' — never answered
+          notifyCallLogUpdate(io, [user.id, otherUserId]);
+        }
         return;
       }
       const c = activeCalls.get(user.id);
       if (c && c.withId === otherUserId) {
         clearActive(user.id);
         io.to(c.peerSocketId).emit('call-ended', { by: user.id, reason: 'hangup' });
+        if (c.callLogId) {
+          await CallLog.update({ endedAt: new Date() }, { where: { id: c.callLogId } });
+          notifyCallLogUpdate(io, [user.id, otherUserId]);
+        }
       }
     });
 

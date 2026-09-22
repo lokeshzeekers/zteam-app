@@ -1,12 +1,32 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import api from '../api';
 import { getSocket } from '../socket';
 import { useAuth } from '../context/AuthContext';
 import { usePresence } from '../context/PresenceContext';
-import { AttachButton, FileAttachment, SendIcon } from '../components/ChatIcons';
+import { AttachButton, FileAttachment, SendIcon, TrashIcon, PhoneIncomingIcon, PhoneMissedIcon, PhoneXIcon } from '../components/ChatIcons';
 import BackButton from '../components/BackButton';
 import { useNotificationCenter } from '../context/NotificationCenterContext';
+
+function GroupCallHistoryRow({ call }) {
+  const label = call.callType === 'video' ? 'Video meeting' : 'Audio meeting';
+  let Icon = PhoneIncomingIcon;
+  let text = `${label} · ${call.title}`;
+  if (call.status === 'cancelled') { Icon = PhoneXIcon; text = `${label} cancelled · ${call.title}`; }
+  else if (call.myStatus === 'invited') { Icon = PhoneMissedIcon; text = `${label} · You missed it · ${call.title}`; }
+  else {
+    const secs = call.endedAt && call.startedAt ? Math.max(0, Math.round((new Date(call.endedAt) - new Date(call.startedAt)) / 1000)) : null;
+    text = `${label} · ${call.title}${secs !== null ? ` · ${secs < 60 ? `${secs}s` : `${Math.round(secs / 60)} min`}` : ''}`;
+  }
+  const statusClass = call.status === 'cancelled' || call.myStatus === 'invited' ? 'missed' : 'completed';
+  return (
+    <div className={`call-log-row ${statusClass}`}>
+      <Icon size={15} />
+      <span>{text}</span>
+      <span className="muted small">{new Date(call.scheduledAt).toLocaleTimeString()}</span>
+    </div>
+  );
+}
 
 export default function GroupChat() {
   const { groupId } = useParams();
@@ -16,6 +36,7 @@ export default function GroupChat() {
   const navigate = useNavigate();
   const [group, setGroup] = useState(null);
   const [messages, setMessages] = useState([]);
+  const [calls, setCalls] = useState([]);
   const [text, setText] = useState('');
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
@@ -28,19 +49,27 @@ export default function GroupChat() {
   const [removeIds, setRemoveIds] = useState([]);
   const [editError, setEditError] = useState('');
   const [savingEdit, setSavingEdit] = useState(false);
+  const [selecting, setSelecting] = useState(false);
+  const [selectedIds, setSelectedIds] = useState([]);
   const bottomRef = useRef(null);
   const fileInputRef = useRef(null);
 
   function loadGroup() {
     return api.get(`/api/groups/${groupId}`).then((r) => setGroup(r.data.group));
   }
+  function loadCalls() {
+    api.get(`/api/calls/group/${groupId}`).then((r) => setCalls(r.data.calls)).catch(() => {});
+  }
 
   useEffect(() => {
     setError('');
+    setSelecting(false);
+    setSelectedIds([]);
     markGroupRead(Number(groupId));
     const loadMessages = () => api.get(`/api/groups/${groupId}/messages`).then((r) => setMessages(r.data.messages)).catch(() => {});
     loadGroup().catch(() => setError('Group not found or you are not a member'));
     loadMessages();
+    loadCalls();
 
     const socket = getSocket();
     if (!socket) return undefined;
@@ -51,27 +80,54 @@ export default function GroupChat() {
         markGroupRead(Number(groupId)); // we're looking right at this group
       }
     };
+    const onDeleted = ({ groupId: gid, messageIds }) => {
+      if (String(gid) !== String(groupId)) return;
+      setMessages((prev) => prev.filter((m) => !messageIds.includes(m.id)));
+      setSelectedIds((prev) => prev.filter((id) => !messageIds.includes(id)));
+    };
     // After a reconnect the server has forgotten our room: rejoin it and catch up.
     const onReconnect = () => {
       socket.emit('join-group-room', { groupId: Number(groupId) });
       loadMessages();
       loadGroup().catch(() => {});
+      loadCalls();
     };
     const onRemoved = () => { loadGroup().catch(() => {}); };
+    const onMeetingChange = () => loadCalls();
     socket.on('new-group-message', handler);
+    socket.on('group-messages-deleted', onDeleted);
     socket.on('connect', onReconnect);
     socket.on('user-removed', onRemoved);
+    socket.on('meeting-updated', onMeetingChange);
+    socket.on('meeting-cancelled', onMeetingChange);
+    socket.on('meeting-starting', onMeetingChange);
+    socket.on('meeting-ended', onMeetingChange);
     return () => {
       socket.off('new-group-message', handler);
+      socket.off('group-messages-deleted', onDeleted);
       socket.off('connect', onReconnect);
       socket.off('user-removed', onRemoved);
+      socket.off('meeting-updated', onMeetingChange);
+      socket.off('meeting-cancelled', onMeetingChange);
+      socket.off('meeting-starting', onMeetingChange);
+      socket.off('meeting-ended', onMeetingChange);
       socket.emit('leave-group-room', { groupId: Number(groupId) });
     };
   }, [groupId]);
 
-  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
+  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages, calls]);
 
   const isOwner = group && (group.createdBy === user.id || user.role === 'admin');
+
+  // Merge messages + past-meeting entries into one time-ordered timeline.
+  const timeline = useMemo(() => {
+    const items = [
+      ...messages.map((m) => ({ kind: 'message', time: m.createdAt, data: m })),
+      ...calls.map((c) => ({ kind: 'call', time: c.startedAt || c.scheduledAt, data: c })),
+    ];
+    items.sort((a, b) => new Date(a.time) - new Date(b.time));
+    return items;
+  }, [messages, calls]);
 
   function send(e) {
     e?.preventDefault();
@@ -118,7 +174,6 @@ export default function GroupChat() {
     setEditName(group.name);
     setAddIds([]);
     setRemoveIds([]);
-    // People you could add who aren't already in the group
     const people = new Map();
     if (user.departmentId) {
       const { data } = await api.get(`/api/directory/departments/${user.departmentId}/members`);
@@ -163,6 +218,37 @@ export default function GroupChat() {
     }
   }
 
+  function toggleSelecting() {
+    setSelecting((s) => !s);
+    setSelectedIds([]);
+  }
+  function toggleSelected(id) {
+    setSelectedIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  }
+
+  async function deleteSelected() {
+    if (selectedIds.length === 0) return;
+    if (!confirm(`Delete ${selectedIds.length} message${selectedIds.length > 1 ? 's' : ''}? This cannot be undone.`)) return;
+    try {
+      await api.post(`/api/groups/${groupId}/messages/delete`, { messageIds: selectedIds });
+      setMessages((prev) => prev.filter((m) => !selectedIds.includes(m.id)));
+      setSelectedIds([]);
+      setSelecting(false);
+    } catch (err) {
+      alert(err?.response?.data?.error || 'Could not delete the selected messages');
+    }
+  }
+
+  async function hideGroupForMe() {
+    if (!confirm(`Remove "${group.name}" from your Groups list? You'll stay a member — it just won't show here unless there's new activity.`)) return;
+    try {
+      await api.post(`/api/groups/${groupId}/hide`);
+      navigate('/groups');
+    } catch (err) {
+      alert(err?.response?.data?.error || 'Could not remove this group from your list');
+    }
+  }
+
   if (error && !group) return <div className="panel"><p className="auth-error">{error}</p></div>;
 
   return (
@@ -177,10 +263,23 @@ export default function GroupChat() {
             👥 Members ({group?.members.length || 0})
           </button>
           <button type="button" className="btn-secondary btn-sm" onClick={startMeetingNow} title="Start a group video meeting now">🎥 Start Meeting</button>
+          <button type="button" className="btn-secondary btn-sm" onClick={toggleSelecting}>{selecting ? 'Cancel' : 'Select'}</button>
           {isOwner && <button type="button" className="btn-secondary btn-sm" onClick={openEdit}>Edit</button>}
           {isOwner && <button type="button" className="btn-danger btn-sm" onClick={deleteGroup}>Delete</button>}
+          <button type="button" className="icon-btn-sm" onClick={hideGroupForMe} title="Remove from my list" aria-label="Remove from my list">
+            <TrashIcon size={16} />
+          </button>
         </div>
       </div>
+
+      {selecting && selectedIds.length > 0 && (
+        <div className="selection-bar">
+          <span>{selectedIds.length} selected</span>
+          <button type="button" className="btn-danger btn-sm" onClick={deleteSelected}>
+            <TrashIcon size={14} /> Delete
+          </button>
+        </div>
+      )}
 
       {showMembers && group && (
         <div className="group-members-panel">
@@ -197,23 +296,35 @@ export default function GroupChat() {
 
       <div className="chat-body">
         {error && <div className="auth-error">{error}</div>}
-        {messages.length === 0 && (
+        {timeline.length === 0 && (
           <div className="empty-state small">
             <p><strong>No messages yet</strong></p>
             <p className="muted">Start the conversation.</p>
           </div>
         )}
-        {messages.map((m) => (
-          <div key={m.id} className={`msg ${m.senderId === user.id ? 'me' : 'them'}`}>
-            {m.senderId !== user.id && (
-              <div className="msg-sender">{group?.members.find((mem) => mem.id === m.senderId)?.name || 'Member'}</div>
+        {timeline.map((item) => item.kind === 'call' ? (
+          <GroupCallHistoryRow key={`call-${item.data.id}`} call={item.data} />
+        ) : (
+          <div key={item.data.id} className={`msg ${item.data.senderId === user.id ? 'me' : 'them'} ${selecting && item.data.senderId === user.id ? 'selectable' : ''}`}>
+            {selecting && item.data.senderId === user.id && (
+              <input
+                type="checkbox"
+                className="msg-select-checkbox"
+                checked={selectedIds.includes(item.data.id)}
+                onChange={() => toggleSelected(item.data.id)}
+              />
             )}
-            {m.type === 'file' ? (
-              <FileAttachment fileUrl={m.fileUrl} fileName={m.fileName} />
-            ) : (
-              m.content
-            )}
-            <div className="msg-time">{new Date(m.createdAt).toLocaleTimeString()}</div>
+            <div className="msg-content">
+              {item.data.senderId !== user.id && (
+                <div className="msg-sender">{group?.members.find((mem) => mem.id === item.data.senderId)?.name || 'Member'}</div>
+              )}
+              {item.data.type === 'file' ? (
+                <FileAttachment fileUrl={item.data.fileUrl} fileName={item.data.fileName} />
+              ) : (
+                item.data.content
+              )}
+              <div className="msg-time">{new Date(item.data.createdAt).toLocaleTimeString()}</div>
+            </div>
           </div>
         ))}
         <div ref={bottomRef} />
