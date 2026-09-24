@@ -8,7 +8,7 @@ import { TrashIcon } from '../components/ChatIcons';
 
 export default function Groups() {
   const { user } = useAuth();
-  const { isGroupUnread } = useNotificationCenter();
+  const { isGroupUnread, markGroupRead } = useNotificationCenter();
   const navigate = useNavigate();
   const [groups, setGroups] = useState([]);
   const [candidates, setCandidates] = useState([]); // people you're allowed to add
@@ -24,13 +24,27 @@ export default function Groups() {
 
   useEffect(() => {
     refresh();
+    // Real-time: keep the list current the moment a group message arrives, a
+    // group is cleared from another window, or we reconnect / come back to the
+    // window — no need to switch sections and return.
     const socket = getSocket();
-    const onInvite = () => refresh();
-    socket?.on('group-invite', onInvite);
-    socket?.on('user-removed', onInvite);
+    const onChange = () => refresh();
+    const onVisible = () => { if (document.visibilityState === 'visible') refresh(); };
+    socket?.on('group-invite', onChange);
+    socket?.on('user-removed', onChange);
+    socket?.on('new-group-message', onChange);
+    socket?.on('group-cleared', onChange);
+    socket?.on('connect', onChange);
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('focus', onChange);
     return () => {
-      socket?.off('group-invite', onInvite);
-      socket?.off('user-removed', onInvite);
+      socket?.off('group-invite', onChange);
+      socket?.off('user-removed', onChange);
+      socket?.off('new-group-message', onChange);
+      socket?.off('group-cleared', onChange);
+      socket?.off('connect', onChange);
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('focus', onChange);
     };
   }, []);
 
@@ -54,14 +68,16 @@ export default function Groups() {
     setSelected((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]));
   }
 
-  async function hideGroup(e, groupId, name) {
+  // Clears the messages for me only — the group stays in the list.
+  async function clearGroupMessages(e, groupId, name) {
     e.stopPropagation(); // don't also navigate into the group
-    if (!confirm(`Remove "${name}" from your Groups list? You'll stay a member — it just won't show here unless there's new activity.`)) return;
+    if (!confirm(`Delete all messages in "${name}" for you? The group stays in your list and other members keep their copy.`)) return;
     try {
       await api.post(`/api/groups/${groupId}/hide`);
-      setGroups((prev) => prev.filter((g) => g.id !== groupId));
+      markGroupRead(groupId);
+      refresh();
     } catch (err) {
-      alert(err?.response?.data?.error || 'Could not remove this group from your list');
+      alert(err?.response?.data?.error || 'Could not delete the messages');
     }
   }
 
@@ -106,9 +122,9 @@ export default function Groups() {
             <button
               type="button"
               className="icon-btn-sm danger group-hide-btn"
-              onClick={(e) => hideGroup(e, g.id, g.name)}
-              title="Remove from my list"
-              aria-label={`Remove ${g.name} from my list`}
+              onClick={(e) => clearGroupMessages(e, g.id, g.name)}
+              title="Delete messages"
+              aria-label={`Delete messages in ${g.name}`}
             >
               <TrashIcon size={19} />
             </button>

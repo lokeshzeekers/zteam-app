@@ -1,9 +1,11 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../api';
+import { usePresence } from '../context/PresenceContext';
 
 export default function Search() {
   const navigate = useNavigate();
+  const { isUserActive } = usePresence();
   const [q, setQ] = useState('');
   const [messages, setMessages] = useState(null);
   const [people, setPeople] = useState(null);
@@ -56,7 +58,7 @@ export default function Search() {
           <div className="search-results-list">
             {people.map((p) => (
               <div className="search-result-row" key={`u-${p.id}`} onClick={() => navigate(p.department ? `/department/${p.department.id}` : '/directory')} role="button" tabIndex={0}>
-                <div className="avatar online" style={{ background: '#2f6feb' }}>{p.name[0].toUpperCase()}</div>
+                <div className={`avatar ${isUserActive(p.id, p.isActive) ? 'online' : 'offline'}`} style={{ background: '#2f6feb' }}>{p.name[0].toUpperCase()}</div>
                 <div>
                   <strong>{p.name}</strong>
                   <div className="muted small">{p.position || 'Member'}{p.department ? ` · ${p.department.name}` : ''} · {p.email}</div>

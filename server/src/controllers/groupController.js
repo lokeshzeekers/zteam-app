@@ -49,15 +49,14 @@ async function listMyGroups(req, res) {
   const result = [];
   for (const g of groups) {
     const hiddenAt = hiddenAtByGroup[g.id];
+    // "Clearing" a group only empties MY view of its messages (anything at or
+    // before hiddenAt is ignored). The group itself always stays in my list.
+    const latestWhere = { groupId: g.id, deletedAt: null };
+    if (hiddenAt) latestWhere.createdAt = { [Op.gt]: hiddenAt };
     const latestMessage = await GroupMessage.findOne({
-      where: { groupId: g.id, deletedAt: null },
+      where: latestWhere,
       order: [['createdAt', 'DESC']],
     });
-    if (hiddenAt) {
-      // Hidden unless there's been a new message since the user hid it —
-      // same "comes back on new activity" rule as a cleared DM conversation.
-      if (!latestMessage || new Date(latestMessage.createdAt) <= new Date(hiddenAt)) continue;
-    }
     const members = await GroupMember.findAll({ where: { groupId: g.id } });
     const users = await User.findAll({ where: { id: members.map((m) => m.userId) } });
     const lastReadAt = lastReadByGroup[g.id];
@@ -78,11 +77,14 @@ async function getGroup(req, res) {
 
   const members = await GroupMember.findAll({ where: { groupId: group.id } });
   const users = await User.findAll({ where: { id: members.map((m) => m.userId) } });
+  const reads = await GroupRead.findAll({ where: { groupId: group.id } });
   res.json({
     group: {
       id: group.id, name: group.name, description: group.description, createdBy: group.createdBy,
       members: users.map((u) => ({ id: u.id, name: u.name, position: u.position, isActive: isPresent(u) })),
     },
+    // userId -> when they last opened / caught up with this group (drives read receipts)
+    reads: Object.fromEntries(reads.map((r) => [r.userId, r.lastReadAt])),
   });
 }
 
@@ -136,6 +138,9 @@ async function getGroupMessages(req, res) {
   if (!(await isMember(groupId, req.user.id))) return res.status(403).json({ error: 'Not a member of this group' });
 
   const where = { groupId, deletedAt: null };
+  // Messages I cleared (see hideGroup) stay out of MY history only.
+  const hide = await GroupHide.findOne({ where: { userId: req.user.id, groupId } });
+  if (hide) where.createdAt = { [Op.gt]: hide.hiddenAt };
   const before = req.query.before ? Number(req.query.before) : null;
   if (before) {
     const anchor = await GroupMessage.findByPk(before);
@@ -149,7 +154,7 @@ async function getGroupMessages(req, res) {
 
   // Opening the group (the first, non-paginated page) marks it read.
   if (!before) {
-    await markRead(req.user.id, Number(groupId));
+    await markRead(req.user.id, Number(groupId), req.app.get('io'));
   }
 
   res.json({ messages, hasMore });
@@ -159,13 +164,21 @@ async function getGroupMessages(req, res) {
 // .upsert(), matching the same safe pattern GroupHide/ConversationClear already
 // use (there's no unique index on (userId, groupId) for a real upsert to match
 // against, so .upsert() would just keep inserting new rows instead of updating).
-async function markRead(userId, groupId) {
+async function markRead(userId, groupId, io) {
   const [row] = await GroupRead.findOrCreate({
     where: { userId, groupId },
     defaults: { lastReadAt: new Date() },
   });
   row.lastReadAt = new Date();
   await row.save();
+
+  // Let the other members' open chats update their read receipts live.
+  if (io) {
+    const members = await GroupMember.findAll({ where: { groupId }, attributes: ['userId'] });
+    if (members.length) {
+      io.to(members.map((m) => `user:${m.userId}`)).emit('group-read', { groupId, userId, lastReadAt: row.lastReadAt });
+    }
+  }
 }
 
 // Explicit "mark read" for when the client wants to clear the unread badge
@@ -174,12 +187,14 @@ async function markRead(userId, groupId) {
 async function markGroupRead(req, res) {
   const groupId = req.params.id;
   if (!(await isMember(groupId, req.user.id))) return res.status(403).json({ error: 'Not a member of this group' });
-  await markRead(req.user.id, Number(groupId));
+  await markRead(req.user.id, Number(groupId), req.app.get('io'));
   res.json({ success: true });
 }
 
-// Hide this group from MY Groups list only — does not touch membership,
-// other members, or the group's shared history in any way.
+// Clear this group's messages for ME only. The group stays in my Groups list —
+// only the messages disappear — and it does not touch membership, other
+// members, or the group's shared history in any way. New messages that arrive
+// afterwards show up normally.
 async function hideGroup(req, res) {
   const groupId = req.params.id;
   if (!(await isMember(groupId, req.user.id))) return res.status(403).json({ error: 'Not a member of this group' });
@@ -189,6 +204,9 @@ async function hideGroup(req, res) {
   });
   row.hiddenAt = new Date();
   await row.save();
+  await markRead(req.user.id, Number(groupId)); // nothing left to be "unread"
+  // Keep my other open windows (desktop app + browser) in step.
+  req.app.get('io')?.to(`user:${req.user.id}`).emit('group-cleared', { groupId: Number(groupId) });
   res.json({ success: true });
 }
 

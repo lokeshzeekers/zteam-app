@@ -4,7 +4,7 @@ import api from '../api';
 import { getSocket } from '../socket';
 import { useAuth } from '../context/AuthContext';
 import { usePresence } from '../context/PresenceContext';
-import { AttachButton, FileAttachment, SendIcon, TrashIcon, CheckSquareIcon, PhoneIncomingIcon, PhoneMissedIcon, PhoneXIcon, EditIcon } from '../components/ChatIcons';
+import { AttachButton, FileAttachment, SendIcon, TrashIcon, CheckSquareIcon, PhoneIncomingIcon, PhoneMissedIcon, PhoneXIcon, EditIcon, CheckIcon } from '../components/ChatIcons';
 import BackButton from '../components/BackButton';
 import { useNotificationCenter } from '../context/NotificationCenterContext';
 
@@ -28,6 +28,23 @@ function GroupCallHistoryRow({ call }) {
   );
 }
 
+// Group read receipts on my own messages:
+//   1 check   = sent (nobody else has caught up yet)
+//   2 checks  = read by some members
+//   2 green checks in a white pill = read by everyone (clearly visible on the blue bubble)
+function GroupReceipt({ message, members, reads, myId }) {
+  const others = members.filter((m) => m.id !== myId);
+  if (others.length === 0) return <span className="receipt" title="Sent"><CheckIcon size={12} /></span>;
+  const readers = others.filter((m) => reads[m.id] && new Date(reads[m.id]) >= new Date(message.createdAt));
+  if (readers.length === others.length) {
+    return <span className="receipt read" title="Read by everyone"><CheckIcon size={12} /><CheckIcon size={12} /></span>;
+  }
+  if (readers.length > 0) {
+    return <span className="receipt" title={`Read by ${readers.map((m) => m.name).join(', ')}`}><CheckIcon size={12} /><CheckIcon size={12} /></span>;
+  }
+  return <span className="receipt" title="Sent"><CheckIcon size={12} /></span>;
+}
+
 export default function GroupChat() {
   const { groupId } = useParams();
   const { user } = useAuth();
@@ -35,6 +52,7 @@ export default function GroupChat() {
   const { isUserActive } = usePresence();
   const navigate = useNavigate();
   const [group, setGroup] = useState(null);
+  const [reads, setReads] = useState({}); // userId -> lastReadAt
   const [messages, setMessages] = useState([]);
   const [calls, setCalls] = useState([]);
   const [text, setText] = useState('');
@@ -63,7 +81,7 @@ export default function GroupChat() {
   const typingClearTimersRef = useRef({});
 
   function loadGroup() {
-    return api.get(`/api/groups/${groupId}`).then((r) => setGroup(r.data.group));
+    return api.get(`/api/groups/${groupId}`).then((r) => { setGroup(r.data.group); setReads(r.data.reads || {}); });
   }
   function loadCalls() {
     api.get(`/api/calls/group/${groupId}`).then((r) => setCalls(r.data.calls)).catch(() => {});
@@ -106,6 +124,7 @@ export default function GroupChat() {
       if (String(message.groupId) === String(groupId)) {
         setMessages((prev) => (prev.some((m) => m.id === message.id) ? prev : [...prev, message]));
         markGroupRead(Number(groupId)); // we're looking right at this group
+        if (message.senderId !== user.id) api.post(`/api/groups/${groupId}/read`).catch(() => {}); // lets the sender see it as read
         setTypingUsers((prev) => { const next = { ...prev }; delete next[message.senderId]; return next; });
       }
     };
@@ -117,6 +136,17 @@ export default function GroupChat() {
     const onEdited = ({ groupId: gid, message }) => {
       if (String(gid) !== String(groupId)) return;
       setMessages((prev) => prev.map((m) => (m.id === message.id ? message : m)));
+    };
+    const onGroupRead = ({ groupId: gid, userId: readerId, lastReadAt }) => {
+      if (String(gid) !== String(groupId)) return;
+      setReads((prev) => ({ ...prev, [readerId]: lastReadAt }));
+    };
+    // I cleared this group's messages from another window (desktop app / browser).
+    const onCleared = ({ groupId: gid }) => {
+      if (String(gid) !== String(groupId)) return;
+      setMessages([]);
+      setHasMore(false);
+      setSelectedIds([]);
     };
     // After a reconnect the server has forgotten our room: rejoin it and catch up.
     const onReconnect = () => {
@@ -143,6 +173,8 @@ export default function GroupChat() {
     socket.on('new-group-message', handler);
     socket.on('group-messages-deleted', onDeleted);
     socket.on('group-message-edited', onEdited);
+    socket.on('group-read', onGroupRead);
+    socket.on('group-cleared', onCleared);
     socket.on('connect', onReconnect);
     socket.on('user-removed', onRemoved);
     socket.on('meeting-updated', onMeetingChange);
@@ -155,6 +187,8 @@ export default function GroupChat() {
       socket.off('new-group-message', handler);
       socket.off('group-messages-deleted', onDeleted);
       socket.off('group-message-edited', onEdited);
+      socket.off('group-read', onGroupRead);
+      socket.off('group-cleared', onCleared);
       socket.off('connect', onReconnect);
       socket.off('user-removed', onRemoved);
       socket.off('meeting-updated', onMeetingChange);
@@ -332,13 +366,18 @@ export default function GroupChat() {
     }
   }
 
-  async function hideGroupForMe() {
-    if (!confirm(`Remove "${group.name}" from your Groups list? You'll stay a member — it just won't show here unless there's new activity.`)) return;
+  // Clears the messages for me only — I stay in the chat and the group stays in my list.
+  async function clearMessagesForMe() {
+    if (!confirm(`Delete all messages in "${group.name}" for you? The group stays in your list and other members keep their copy.`)) return;
     try {
       await api.post(`/api/groups/${groupId}/hide`);
-      navigate('/groups');
+      setMessages([]);
+      setHasMore(false);
+      setSelectedIds([]);
+      setSelecting(false);
+      markGroupRead(Number(groupId));
     } catch (err) {
-      alert(err?.response?.data?.error || 'Could not remove this group from your list');
+      alert(err?.response?.data?.error || 'Could not delete the messages');
     }
   }
 
@@ -367,7 +406,7 @@ export default function GroupChat() {
           </button>
           {isOwner && <button type="button" className="btn-secondary btn-sm" onClick={openEdit}>Edit</button>}
           {isOwner && <button type="button" className="btn-danger btn-sm" onClick={deleteGroup}>Delete</button>}
-          <button type="button" className="icon-btn-sm danger" onClick={hideGroupForMe} title="Remove from my list" aria-label="Remove from my list">
+          <button type="button" className="icon-btn-sm danger" onClick={clearMessagesForMe} title="Delete all messages (for me)" aria-label="Delete all messages for me">
             <TrashIcon size={19} />
           </button>
         </div>
@@ -447,6 +486,7 @@ export default function GroupChat() {
                   <div className="msg-time">
                     {item.data.editedAt && <span className="edited-tag">edited</span>}
                     {new Date(item.data.createdAt).toLocaleTimeString()}
+                    {item.data.senderId === user.id && group && <GroupReceipt message={item.data} members={group.members} reads={reads} myId={user.id} />}
                   </div>
                 </>
               )}

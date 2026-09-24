@@ -1,4 +1,5 @@
 const { Op } = require('sequelize');
+const { isPresent } = require('../utils/presence');
 const { Message, GroupMessage, GroupMember, Group, User, Department, ConversationClear, GroupHide } = require('../models');
 
 // Search across every DM and group conversation the user can actually see —
@@ -87,6 +88,7 @@ async function searchDirectory(req, res) {
   res.json({
     results: users.map((u) => ({
       id: u.id, name: u.name, email: u.email, position: u.position,
+      isActive: isPresent(u),
       department: u.department ? { id: u.department.id, name: u.department.name } : null,
     })),
   });
