@@ -7,6 +7,7 @@ router.post('/', ctrl.createMeeting);
 router.get('/', ctrl.listMyMeetings);
 router.put('/:id', ctrl.updateMeeting);
 router.delete('/:id', ctrl.deleteMeeting);
+router.delete('/:id/history', ctrl.removeFromHistory);
 router.post('/:id/start', ctrl.startMeeting);
 router.post('/:id/end', ctrl.endMeeting);
 

@@ -1,6 +1,6 @@
 const crypto = require('crypto');
 const { Op } = require('sequelize');
-const { Meeting, MeetingParticipant, GroupMember, User } = require('../models');
+const { Meeting, MeetingParticipant, GroupMember, User, MeetingHide } = require('../models');
 const { canCommunicate } = require('../utils/permissions');
 const { clearMeetingRoom } = require('../sockets');
 
@@ -69,7 +69,10 @@ async function createMeeting(req, res) {
 
 async function listMyMeetings(req, res) {
   const rows = await MeetingParticipant.findAll({ where: { userId: req.user.id } });
-  const meetingIds = rows.map((r) => r.meetingId);
+  // Meetings I removed from MY history stay out of my list (nobody else's).
+  const hidden = await MeetingHide.findAll({ where: { userId: req.user.id } });
+  const hiddenIds = new Set(hidden.map((h) => h.meetingId));
+  const meetingIds = rows.map((r) => r.meetingId).filter((id) => !hiddenIds.has(id));
   const meetings = await Meeting.findAll({
     where: { id: meetingIds },
     order: [['scheduledAt', 'ASC']],
@@ -144,6 +147,23 @@ async function deleteMeeting(req, res) {
   res.json({ success: true });
 }
 
+// Remove a PAST (ended / cancelled) meeting from MY meeting history only.
+// Anyone who took part can do this; the meeting itself and every other
+// participant's history are left exactly as they were.
+async function removeFromHistory(req, res) {
+  const meeting = await Meeting.findByPk(req.params.id);
+  if (!meeting) return res.status(404).json({ error: 'Meeting not found' });
+  const participant = await MeetingParticipant.findOne({ where: { meetingId: meeting.id, userId: req.user.id } });
+  if (!participant) return res.status(403).json({ error: 'You were not part of this meeting' });
+  if (meeting.status !== 'ended' && meeting.status !== 'cancelled') {
+    return res.status(400).json({ error: 'Only past meetings can be removed from history' });
+  }
+  await MeetingHide.findOrCreate({ where: { userId: req.user.id, meetingId: meeting.id } });
+  // Keep my other open windows (desktop app + browser) in step.
+  req.app.get('io')?.to(`user:${req.user.id}`).emit('meeting-history-removed', { meetingId: meeting.id });
+  res.json({ success: true });
+}
+
 // Explicitly start a scheduled meeting now (organizer only) - flips status
 // and notifies all invited participants immediately (they get the
 // notify+taskbar-blink treatment on their side).
@@ -199,4 +219,4 @@ async function endMeeting(req, res) {
   res.json({ meeting });
 }
 
-module.exports = { createMeeting, listMyMeetings, updateMeeting, deleteMeeting, startMeeting, endMeeting };
+module.exports = { createMeeting, listMyMeetings, updateMeeting, deleteMeeting, removeFromHistory, startMeeting, endMeeting };

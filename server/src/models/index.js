@@ -12,6 +12,7 @@ const MeetingParticipant = require('./MeetingParticipant');
 const ConversationClear = require('./ConversationClear');
 const GroupHide = require('./GroupHide');
 const GroupRead = require('./GroupRead');
+const MeetingHide = require('./MeetingHide');
 
 Department.hasMany(User, { foreignKey: 'departmentId', as: 'members' });
 User.belongsTo(Department, { foreignKey: 'departmentId', as: 'department' });
@@ -29,5 +30,5 @@ MeetingParticipant.belongsTo(Meeting, { foreignKey: 'meetingId' });
 module.exports = {
   sequelize, Department, User, Connection, Message, CallLog,
   Group, GroupMember, GroupMessage, Meeting, MeetingParticipant,
-  ConversationClear, GroupHide, GroupRead,
+  ConversationClear, GroupHide, GroupRead, MeetingHide,
 };

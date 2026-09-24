@@ -5,6 +5,7 @@ import { useAuth } from '../context/AuthContext';
 import { getSocket } from '../socket';
 import { useNotificationCenter } from '../context/NotificationCenterContext';
 import Select from '../components/Select';
+import { TrashIcon } from '../components/ChatIcons';
 
 const CALL_TYPE_OPTIONS = [
   { value: 'video', label: 'Video' },
@@ -55,12 +56,14 @@ export default function Meetings() {
     socket?.on('meeting-cancelled', onChange);
     socket?.on('meeting-starting', onAlertWhileOpen);
     socket?.on('meeting-ended', onChange);
+    socket?.on('meeting-history-removed', onChange);
     return () => {
       socket?.off('meeting-invite', onAlertWhileOpen);
       socket?.off('meeting-updated', onChange);
       socket?.off('meeting-cancelled', onChange);
       socket?.off('meeting-starting', onAlertWhileOpen);
       socket?.off('meeting-ended', onChange);
+      socket?.off('meeting-history-removed', onChange);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -149,6 +152,15 @@ export default function Meetings() {
     return runAction(id, async () => { await api.delete(`/api/meetings/${id}`); refresh(); });
   }
 
+  // Past meetings: remove from MY history only (others keep theirs).
+  function removeFromHistory(m) {
+    if (!confirm(`Remove "${m.title}" from your meeting history? Other participants keep their copy.`)) return;
+    return runAction(m.id, async () => {
+      await api.delete(`/api/meetings/${m.id}/history`);
+      setMeetings((prev) => prev.filter((x) => x.id !== m.id));
+    });
+  }
+
   // Host: start a scheduled meeting (or re-enter one that's already live) and go to the room.
   function startNow(m) {
     return runAction(m.id, async () => {
@@ -221,6 +233,18 @@ export default function Meetings() {
               <div>
                 <strong>{m.title}</strong> <span className="status-pill rejected">{m.status}</span>
                 <div className="muted small">{new Date(m.scheduledAt).toLocaleString()}</div>
+              </div>
+              <div className="request-actions">
+                <button
+                  type="button"
+                  className="icon-btn-sm danger"
+                  disabled={busyId === m.id}
+                  onClick={() => removeFromHistory(m)}
+                  title="Remove from my history"
+                  aria-label={`Remove ${m.title} from my history`}
+                >
+                  <TrashIcon size={19} />
+                </button>
               </div>
             </div>
           ))}
