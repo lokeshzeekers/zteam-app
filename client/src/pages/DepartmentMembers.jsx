@@ -5,6 +5,7 @@ import { useAuth } from '../context/AuthContext';
 import { usePresence } from '../context/PresenceContext';
 import { getSocket } from '../socket';
 import BackButton from '../components/BackButton';
+import { alertDialog } from '../dialogs';
 
 export default function DepartmentMembers() {
   const { id } = useParams();
@@ -33,7 +34,7 @@ export default function DepartmentMembers() {
       await api.post('/api/connections/request', { receiverId });
       refresh();
     } catch (err) {
-      alert(err?.response?.data?.error || 'Could not send request');
+      alertDialog(err?.response?.data?.error || 'Could not send request');
     }
   }
 

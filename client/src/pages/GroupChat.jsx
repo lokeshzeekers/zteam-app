@@ -8,6 +8,7 @@ import { AttachButton, FileAttachment, SendIcon, TrashIcon, CheckSquareIcon, Pho
 import BackButton from '../components/BackButton';
 import MessageMenu from '../components/MessageMenu';
 import { useNotificationCenter } from '../context/NotificationCenterContext';
+import { confirmDialog, alertDialog } from '../dialogs';
 
 function GroupCallHistoryRow({ call }) {
   const label = call.callType === 'video' ? 'Video meeting' : 'Audio meeting';
@@ -381,26 +382,26 @@ export default function GroupChat() {
       setMessages((prev) => prev.map((m) => (m.id === id ? data.message : m)));
       cancelEdit();
     } catch (err) {
-      alert(err?.response?.data?.error || 'Could not save the edit');
+      alertDialog(err?.response?.data?.error || 'Could not save the edit');
     }
   }
 
   async function deleteSelected() {
     if (selectedIds.length === 0) return;
-    if (!confirm(`Delete ${selectedIds.length} message${selectedIds.length > 1 ? 's' : ''}? This cannot be undone.`)) return;
+    if (!(await confirmDialog(`Delete ${selectedIds.length} message${selectedIds.length > 1 ? 's' : ''}? This cannot be undone.`, { confirmText: 'Delete' }))) return;
     try {
       await api.post(`/api/groups/${groupId}/messages/delete`, { messageIds: selectedIds });
       setMessages((prev) => prev.filter((m) => !selectedIds.includes(m.id)));
       setSelectedIds([]);
       setSelecting(false);
     } catch (err) {
-      alert(err?.response?.data?.error || 'Could not delete the selected messages');
+      alertDialog(err?.response?.data?.error || 'Could not delete the selected messages');
     }
   }
 
   // Clears the messages for me only — I stay in the chat and the group stays in my list.
   async function clearMessagesForMe() {
-    if (!confirm(`Delete all messages in "${group.name}" for you? The group stays in your list and other members keep their copy.`)) return;
+    if (!(await confirmDialog(`Delete all messages in "${group.name}" for you? The group stays in your list and other members keep their copy.`, { confirmText: 'Delete' }))) return;
     try {
       await api.post(`/api/groups/${groupId}/hide`);
       setMessages([]);
@@ -409,7 +410,7 @@ export default function GroupChat() {
       setSelecting(false);
       markGroupRead(Number(groupId));
     } catch (err) {
-      alert(err?.response?.data?.error || 'Could not delete the messages');
+      alertDialog(err?.response?.data?.error || 'Could not delete the messages');
     }
   }
 

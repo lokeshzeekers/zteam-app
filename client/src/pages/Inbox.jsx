@@ -6,6 +6,7 @@ import { useAuth } from '../context/AuthContext';
 import { usePresence } from '../context/PresenceContext';
 import { useNotificationCenter } from '../context/NotificationCenterContext';
 import { FileIcon, TrashIcon } from '../components/ChatIcons';
+import { confirmDialog, alertDialog } from '../dialogs';
 
 export default function Inbox() {
   const [threads, setThreads] = useState([]);
@@ -17,13 +18,13 @@ export default function Inbox() {
 
   async function deleteConversation(e, otherUserId) {
     e.stopPropagation(); // don't also navigate into the chat
-    if (!confirm('Delete this conversation from your chat list? The other person keeps their copy.')) return;
+    if (!(await confirmDialog('Delete this conversation from your chat list? The other person keeps their copy.', { confirmText: 'Delete' }))) return;
     try {
       await api.delete(`/api/messages/with/${otherUserId}`);
       setThreads((prev) => prev.filter((t) => t.user?.id !== otherUserId));
       markDMRead(otherUserId); // deleted before opening: it must not keep showing as "new message"
     } catch (err) {
-      alert(err?.response?.data?.error || 'Could not delete the conversation');
+      alertDialog(err?.response?.data?.error || 'Could not delete the conversation');
     }
   }
 

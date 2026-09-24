@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import api from '../api';
 import { getSocket } from '../socket';
 import { MicIcon, MicOffIcon, VideoIcon, VideoOffIcon, LeaveIcon } from '../components/CallIcons';
+import { confirmDialog } from '../dialogs';
 
 // STUN is enough on most networks. If people on different networks / strict
 // firewalls can't see or hear each other, add a TURN server in client/.env:
@@ -357,7 +358,7 @@ export default function MeetingRoom() {
   }
 
   async function endForEveryone() {
-    if (!confirm('End this meeting for everyone?')) return;
+    if (!(await confirmDialog('End this meeting for everyone?', { confirmText: 'End meeting' }))) return;
     setEnding(true);
     try {
       await api.post(`/api/meetings/${meetingId}/end`);

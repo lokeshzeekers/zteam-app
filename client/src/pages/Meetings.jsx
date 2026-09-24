@@ -6,6 +6,7 @@ import { getSocket } from '../socket';
 import { useNotificationCenter } from '../context/NotificationCenterContext';
 import Select from '../components/Select';
 import { TrashIcon } from '../components/ChatIcons';
+import { confirmDialog } from '../dialogs';
 
 const CALL_TYPE_OPTIONS = [
   { value: 'video', label: 'Video' },
@@ -147,14 +148,14 @@ export default function Meetings() {
     finally { setBusyId(null); }
   }
 
-  function cancelMeeting(id) {
-    if (!confirm('Cancel and delete this meeting? Invited participants will be notified.')) return;
+  async function cancelMeeting(id) {
+    if (!(await confirmDialog('Cancel and delete this meeting? Invited participants will be notified.', { confirmText: 'Delete meeting' }))) return;
     return runAction(id, async () => { await api.delete(`/api/meetings/${id}`); refresh(); });
   }
 
   // Past meetings: remove from MY history only (others keep theirs).
-  function removeFromHistory(m) {
-    if (!confirm(`Remove "${m.title}" from your meeting history? Other participants keep their copy.`)) return;
+  async function removeFromHistory(m) {
+    if (!(await confirmDialog(`Remove "${m.title}" from your meeting history? Other participants keep their copy.`, { confirmText: 'Remove' }))) return;
     return runAction(m.id, async () => {
       await api.delete(`/api/meetings/${m.id}/history`);
       setMeetings((prev) => prev.filter((x) => x.id !== m.id));
@@ -169,8 +170,8 @@ export default function Meetings() {
     });
   }
 
-  function endMeeting(id) {
-    if (!confirm('End this meeting for everyone?')) return;
+  async function endMeeting(id) {
+    if (!(await confirmDialog('End this meeting for everyone?', { confirmText: 'End meeting' }))) return;
     return runAction(id, async () => { await api.post(`/api/meetings/${id}/end`); refresh(); });
   }
 

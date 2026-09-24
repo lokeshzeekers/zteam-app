@@ -103,9 +103,12 @@ function createWindow() {
   mainWindow.loadURL(START_URL);
 
   // Clear the blinking taskbar flag AND the notification badge whenever the window regains focus.
+  // Also hand keyboard focus back to the page itself, so after any OS-level dialog or window
+  // switch the text boxes stay clickable and typeable.
   mainWindow.on('focus', () => {
     stopContinuousFlash();
     clearOverlayBadge();
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.focus();
   });
 
   mainWindow.on('close', (e) => {

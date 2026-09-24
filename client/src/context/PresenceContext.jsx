@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { useAuth } from './AuthContext';
 import { getSocket } from '../socket';
+import { alertDialog } from '../dialogs';
 
 const PresenceContext = createContext({ presence: {}, isUserActive: () => false });
 
@@ -49,7 +50,7 @@ export function PresenceProvider({ children }) {
     const onRemoved = ({ userId }) => {
       setPresence((p) => { const next = { ...p }; delete next[userId]; return next; });
       if (userRef.current && userId === userRef.current.id) {
-        alert('Your account has been removed by an administrator.');
+        alertDialog('Your account has been removed by an administrator.');
         logout();
       }
     };

@@ -5,6 +5,7 @@ import { useAuth } from '../context/AuthContext';
 import { useNotificationCenter } from '../context/NotificationCenterContext';
 import { getSocket } from '../socket';
 import { TrashIcon } from '../components/ChatIcons';
+import { confirmDialog, alertDialog } from '../dialogs';
 
 export default function Groups() {
   const { user } = useAuth();
@@ -81,13 +82,13 @@ export default function Groups() {
   // Clears the messages for me only — the group stays in the list.
   async function clearGroupMessages(e, groupId, name) {
     e.stopPropagation(); // don't also navigate into the group
-    if (!confirm(`Delete all messages in "${name}" for you? The group stays in your list and other members keep their copy.`)) return;
+    if (!(await confirmDialog(`Delete all messages in "${name}" for you? The group stays in your list and other members keep their copy.`, { confirmText: 'Delete' }))) return;
     try {
       await api.post(`/api/groups/${groupId}/hide`);
       markGroupRead(groupId);
       refresh();
     } catch (err) {
-      alert(err?.response?.data?.error || 'Could not delete the messages');
+      alertDialog(err?.response?.data?.error || 'Could not delete the messages');
     }
   }
 

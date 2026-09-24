@@ -10,6 +10,7 @@ import {
 import BackButton from '../components/BackButton';
 import MessageMenu from '../components/MessageMenu';
 import { useNotificationCenter } from '../context/NotificationCenterContext';
+import { confirmDialog, alertDialog } from '../dialogs';
 
 function CallHistoryRow({ call, meId }) {
   const iAmCaller = call.callerId === meId;
@@ -245,24 +246,24 @@ export default function ChatWindow({ onStartCall }) {
 
   async function deleteSelected() {
     if (selectedIds.length === 0) return;
-    if (!confirm(`Delete ${selectedIds.length} message${selectedIds.length > 1 ? 's' : ''}? This cannot be undone.`)) return;
+    if (!(await confirmDialog(`Delete ${selectedIds.length} message${selectedIds.length > 1 ? 's' : ''}? This cannot be undone.`, { confirmText: 'Delete' }))) return;
     try {
       await api.post('/api/messages/delete', { messageIds: selectedIds });
       setMessages((prev) => prev.filter((m) => !selectedIds.includes(m.id)));
       setSelectedIds([]);
       setSelecting(false);
     } catch (err) {
-      alert(err?.response?.data?.error || 'Could not delete the selected messages');
+      alertDialog(err?.response?.data?.error || 'Could not delete the selected messages');
     }
   }
 
   async function deleteConversation() {
-    if (!confirm('Delete this whole conversation from your chat list? The other person keeps their copy. This cannot be undone on your side.')) return;
+    if (!(await confirmDialog('Delete this whole conversation from your chat list? The other person keeps their copy. This cannot be undone on your side.', { confirmText: 'Delete' }))) return;
     try {
       await api.delete(`/api/messages/with/${userId}`);
       navigate('/');
     } catch (err) {
-      alert(err?.response?.data?.error || 'Could not delete the conversation');
+      alertDialog(err?.response?.data?.error || 'Could not delete the conversation');
     }
   }
 
@@ -282,7 +283,7 @@ export default function ChatWindow({ onStartCall }) {
       setMessages((prev) => prev.map((m) => (m.id === id ? data.message : m)));
       cancelEdit();
     } catch (err) {
-      alert(err?.response?.data?.error || 'Could not save the edit');
+      alertDialog(err?.response?.data?.error || 'Could not save the edit');
     }
   }
 

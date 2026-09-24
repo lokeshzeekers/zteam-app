@@ -4,6 +4,7 @@ import App from './App.jsx';
 import { AuthProvider } from './context/AuthContext.jsx';
 import { PresenceProvider } from './context/PresenceContext.jsx';
 import { NotificationCenterProvider } from './context/NotificationCenterContext.jsx';
+import { DialogHost } from './dialogs.jsx';
 import './styles.css';
 
 ReactDOM.createRoot(document.getElementById('root')).render(
@@ -20,6 +21,8 @@ ReactDOM.createRoot(document.getElementById('root')).render(
         <NotificationCenterProvider>
           <App />
         </NotificationCenterProvider>
+        {/* In-app confirm/alert dialogs (native ones break text-box focus in the desktop app) */}
+        <DialogHost />
       </PresenceProvider>
     </AuthProvider>
   </BrowserRouter>

@@ -3,6 +3,7 @@ import api from '../api';
 import { usePresence } from '../context/PresenceContext';
 import Select from '../components/Select';
 import { getSocket } from '../socket';
+import { confirmDialog, alertDialog } from '../dialogs';
 
 const ROLE_OPTIONS = [
   { value: 'employee', label: 'Employee' },
@@ -42,14 +43,14 @@ export default function AdminPanel() {
   }
 
   async function deleteDept(id) {
-    if (!confirm('Delete this department? Members must be reassigned first.')) return;
+    if (!(await confirmDialog('Delete this department? Members must be reassigned first.', { confirmText: 'Delete' }))) return;
     try { await api.delete(`/api/admin/departments/${id}`); refresh(); }
-    catch (err) { alert(err?.response?.data?.error || 'Failed to delete'); }
+    catch (err) { alertDialog(err?.response?.data?.error || 'Failed to delete'); }
   }
 
   async function createEmp(e) {
     e.preventDefault();
-    if (!newEmp.name || !newEmp.email || !newEmp.departmentId) return alert('Name, email and department are required');
+    if (!newEmp.name || !newEmp.email || !newEmp.departmentId) return alertDialog('Name, email and department are required');
     const { data } = await api.post('/api/admin/employees', { ...newEmp, departmentId: Number(newEmp.departmentId) });
     setLastCreated({ name: data.user.name, email: data.user.email, tempPassword: data.tempPassword });
     setNewEmp({ name: '', email: '', phone: '', employeeNumber: '', position: '', departmentId: '', role: 'employee' });
@@ -57,12 +58,12 @@ export default function AdminPanel() {
   }
 
   async function deleteEmp(id) {
-    if (!confirm('Remove this employee? This cannot be undone.')) return;
+    if (!(await confirmDialog('Remove this employee? This cannot be undone.', { confirmText: 'Remove' }))) return;
     try {
       await api.delete(`/api/admin/employees/${id}`);
       refresh();
     } catch (err) {
-      alert(err?.response?.data?.error || 'Could not delete this employee.');
+      alertDialog(err?.response?.data?.error || 'Could not delete this employee.');
     }
   }
 
