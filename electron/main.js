@@ -116,10 +116,25 @@ function createWindow() {
       mainWindow.hide();
       return;
     }
-    // Windows/Linux: closing the window fully quits Zteam. Going through app.quit() runs
-    // the before-quit handshake below, so the server is told we went inactive first.
-    e.preventDefault();
-    app.quit();
+    // Windows/Linux: let the window close and the process exit immediately.
+    // We used to preventDefault() here and route through app.quit() ->
+    // 'before-quit', which blocked the real quit on an async handshake
+    // (waiting for the server to ack "go-inactive") before finally calling
+    // app.quit() a second time. That is what was leaving Zteam running as a
+    // background process after clicking X — needing a manual End Task —
+    // and, since the single-instance lock is only released once the process
+    // truly exits, made the next launch believe nothing was running, opening
+    // a second full session (and a third, and so on).
+    // The go-inactive ping is now fire-and-forget and never blocks the close —
+    // it's a presence nicety only: the server already marks the user offline
+    // the moment this socket disconnects (see the server's socket
+    // 'disconnect' handler), so nothing actually depends on it landing.
+    app.isQuiting = true;
+    try {
+      mainWindow.webContents.executeJavaScript('window.__zteamGoInactive ? window.__zteamGoInactive() : 0').catch(() => {});
+    } catch (err) {
+      // Renderer already gone / not reachable - nothing to tell, close proceeds regardless.
+    }
   });
 }
 
@@ -164,36 +179,15 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
 
-// ---- Real quit: tell the server we're inactive BEFORE the process goes away ----
-// A renderer 'beforeunload' emit races the process exit and can be lost, so the
-// main process asks the page to send 'go-inactive', waits for the server's
-// acknowledgement (max ~2s), and only then lets the quit continue.
-// (On macOS closing the window only hides it and never reaches this.)
-let quitState = 'idle'; // idle -> pending (waiting for the server) -> done
-
-async function goInactiveBeforeQuit() {
-  const win = mainWindow;
-  if (!win || win.isDestroyed()) return;
-  let timer;
-  try {
-    await Promise.race([
-      win.webContents.executeJavaScript('window.__zteamGoInactive ? window.__zteamGoInactive() : false'),
-      new Promise((resolve) => { timer = setTimeout(resolve, 2000); }),
-    ]);
-  } catch (e) {
-    // Page not available - the server also notices the closed connection.
-  }
-  clearTimeout(timer);
-}
-
-app.on('before-quit', (event) => {
+// ---- Real quit cleanup ----
+// Only cosmetic cleanup now (stop any taskbar flash) — the close handler above
+// no longer routes through here to block on an async handshake before quitting.
+// This still fires for quit paths that don't go through the window 'close'
+// handler at all (Cmd+Q on macOS, the auto-updater's quitAndInstall, etc.),
+// so it's kept as a safety net for the flashing/badge state, not for blocking.
+app.on('before-quit', () => {
   app.isQuiting = true; // a real quit is underway: the close handler must let the window close
   stopContinuousFlash();
-  if (quitState === 'done') return; // handshake finished: let the quit proceed
-  event.preventDefault();
-  if (quitState === 'pending') return;
-  quitState = 'pending';
-  goInactiveBeforeQuit().finally(() => { quitState = 'done'; app.quit(); });
 });
 
 // ---- IPC: notifications + taskbar blink + badge, triggered from the web UI ----
