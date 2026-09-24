@@ -163,7 +163,23 @@ export default function GroupChat() {
       loadGroup().catch(() => {});
       loadCalls();
     };
+    // Whole account deleted somewhere (admin action) — may or may not involve this group;
+    // just re-check the member list. Not scoped to a groupId in its payload.
     const onRemoved = () => { loadGroup().catch(() => {}); };
+    // I specifically was taken out of THIS group (this event only ever reaches the
+    // person who was removed) — leave the chat live instead of sitting in a group
+    // I'm no longer part of and getting silent 403s.
+    const onMemberRemoved = ({ groupId: gid, groupName } = {}) => {
+      if (String(gid) !== String(groupId)) return;
+      setNotice(`You were removed from ${groupName || 'this group'}.`);
+      setTimeout(() => navigate('/groups'), 1800);
+    };
+    // Membership changed (someone added or removed) but I'm still in the group —
+    // refresh the member list / owner-only controls live.
+    const onGroupUpdated = ({ groupId: gid } = {}) => {
+      if (String(gid) !== String(groupId)) return;
+      loadGroup().catch(() => {});
+    };
     const onMeetingChange = () => loadCalls();
     const onGroupTyping = ({ groupId: gid, userId: fromId, name }) => {
       if (String(gid) !== String(groupId) || fromId === user.id) return;
@@ -185,6 +201,8 @@ export default function GroupChat() {
     socket.on('group-cleared', onCleared);
     socket.on('connect', onReconnect);
     socket.on('user-removed', onRemoved);
+    socket.on('group-member-removed', onMemberRemoved);
+    socket.on('group-updated', onGroupUpdated);
     socket.on('meeting-updated', onMeetingChange);
     socket.on('meeting-cancelled', onMeetingChange);
     socket.on('meeting-starting', onMeetingChange);
@@ -199,6 +217,8 @@ export default function GroupChat() {
       socket.off('group-cleared', onCleared);
       socket.off('connect', onReconnect);
       socket.off('user-removed', onRemoved);
+      socket.off('group-member-removed', onMemberRemoved);
+      socket.off('group-updated', onGroupUpdated);
       socket.off('meeting-updated', onMeetingChange);
       socket.off('meeting-cancelled', onMeetingChange);
       socket.off('meeting-starting', onMeetingChange);

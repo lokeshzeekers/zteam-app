@@ -54,13 +54,18 @@ async function listMyGroups(req, res) {
   const reads = await GroupRead.findAll({ where: { userId: req.user.id, groupId: groupIds } });
   const lastReadByGroup = Object.fromEntries(reads.map((r) => [r.groupId, r.lastReadAt]));
 
+  const myMembershipByGroup = Object.fromEntries(memberships.map((m) => [m.groupId, m.createdAt]));
+
   const result = [];
   for (const g of groups) {
     const hiddenAt = hiddenAtByGroup[g.id];
+    const joinedAt = myMembershipByGroup[g.id];
     // "Clearing" a group only empties MY view of its messages (anything at or
     // before hiddenAt is ignored). The group itself always stays in my list.
+    // A message from before I joined this group is likewise never "mine" to see.
     const latestWhere = { groupId: g.id, deletedAt: null };
-    if (hiddenAt) latestWhere.createdAt = { [Op.gt]: hiddenAt };
+    const latestLowerBound = [hiddenAt, joinedAt].filter(Boolean).map((d) => new Date(d));
+    if (latestLowerBound.length) latestWhere.createdAt = { [Op.gt]: new Date(Math.max(...latestLowerBound.map((d) => d.getTime()))) };
     const latestMessage = await GroupMessage.findOne({
       where: latestWhere,
       order: [['createdAt', 'DESC']],
@@ -68,9 +73,9 @@ async function listMyGroups(req, res) {
     const members = await GroupMember.findAll({ where: { groupId: g.id } });
     const users = await User.findAll({ where: { id: members.map((m) => m.userId) } });
     // Unread = someone ELSE's message, not deleted, newer than when I last caught up
-    // (and newer than my own clear point). Deleted messages never count as "new".
+    // (and newer than my own clear point / join time). Deleted messages never count as "new".
     const lastReadAt = lastReadByGroup[g.id];
-    const since = [lastReadAt, hiddenAt].filter(Boolean).map((d) => new Date(d)).sort((a, b) => b - a)[0];
+    const since = [lastReadAt, hiddenAt, joinedAt].filter(Boolean).map((d) => new Date(d)).sort((a, b) => b - a)[0];
     const unreadWhere = { groupId: g.id, deletedAt: null, senderId: { [Op.ne]: req.user.id } };
     if (since) unreadWhere.createdAt = { [Op.gt]: since };
     const unread = !!latestMessage && (await GroupMessage.count({ where: unreadWhere })) > 0;
@@ -113,17 +118,47 @@ async function updateGroup(req, res) {
   if (description !== undefined) group.description = description;
   await group.save();
 
+  // Track who was actually added/removed (skipping no-ops) so the realtime
+  // notifications below only go to people whose membership truly changed.
+  const addedMembers = [];
+  const removedIds = [];
+
   for (const id of addMemberIds.map(Number)) {
     const target = await User.findByPk(id);
     if (!target) continue;
     const allowed = await canCommunicate(req.user, target);
     if (!allowed) continue;
     const exists = await GroupMember.findOne({ where: { groupId: group.id, userId: id } });
-    if (!exists) await GroupMember.create({ groupId: group.id, userId: id, role: 'member' });
+    if (!exists) {
+      await GroupMember.create({ groupId: group.id, userId: id, role: 'member' });
+      addedMembers.push(target);
+    }
   }
   for (const id of removeMemberIds.map(Number)) {
     if (id === group.createdBy) continue; // the owner can't be removed from their own group
-    await GroupMember.destroy({ where: { groupId: group.id, userId: id } });
+    const deleted = await GroupMember.destroy({ where: { groupId: group.id, userId: id } });
+    if (deleted) removedIds.push(id);
+  }
+
+  // Real time: previously nothing was emitted here at all, so a newly added
+  // member's Groups list, a removed member's open chat, and everyone else's
+  // member panel only ever updated on the next full page load/navigation.
+  const io = req.app.get('io');
+  if (io) {
+    // New members: same event createGroup already sends, so their Groups list
+    // picks the group up immediately.
+    addedMembers.forEach((m) => io.to(`user:${m.id}`).emit('group-invite', { group: { id: group.id, name: group.name } }));
+    // Removed members: distinct from the account-deletion 'user-removed' event —
+    // this only means "you're out of this one group", so their Groups list drops
+    // it and, if they currently have the group chat open, they're notified and
+    // sent back to the list live instead of sitting in a chat they can no longer use.
+    removedIds.forEach((id) => io.to(`user:${id}`).emit('group-member-removed', { groupId: group.id, groupName: group.name }));
+    // Everyone who remains a member (including the just-added ones) gets told the
+    // group changed, so an open member list / group name refreshes without reload.
+    const remaining = await GroupMember.findAll({ where: { groupId: group.id }, attributes: ['userId'] });
+    if (remaining.length) {
+      io.to(remaining.map((m) => `user:${m.userId}`)).emit('group-updated', { groupId: group.id });
+    }
   }
 
   res.json({ success: true });
@@ -148,13 +183,18 @@ async function deleteGroup(req, res) {
 // newest page by default, `before` (a message id) to page further back.
 async function getGroupMessages(req, res) {
   const groupId = req.params.id;
-  if (!(await isMember(groupId, req.user.id))) return res.status(403).json({ error: 'Not a member of this group' });
+  const membership = await GroupMember.findOne({ where: { groupId, userId: req.user.id } });
+  if (!membership) return res.status(403).json({ error: 'Not a member of this group' });
 
   // Deleted messages are included (redacted) so they show as "This message was deleted".
   const where = { groupId };
-  // Messages I cleared (see hideGroup) stay out of MY history only.
+  // A member only ever sees messages sent from the point they joined onward —
+  // someone added to the group later must not see the history that predates them.
+  // Combined with whatever they've cleared for themselves (see hideGroup): whichever
+  // of the two is more recent wins.
   const hide = await GroupHide.findOne({ where: { userId: req.user.id, groupId } });
-  if (hide) where.createdAt = { [Op.gt]: hide.hiddenAt };
+  const cutoffs = [membership.createdAt, hide?.hiddenAt].filter(Boolean).map((d) => new Date(d));
+  if (cutoffs.length) where.createdAt = { [Op.gt]: new Date(Math.max(...cutoffs.map((d) => d.getTime()))) };
   const before = req.query.before ? Number(req.query.before) : null;
   if (before) {
     const anchor = await GroupMessage.findByPk(before);

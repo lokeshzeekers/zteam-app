@@ -32,6 +32,12 @@ export default function Groups() {
     const onVisible = () => { if (document.visibilityState === 'visible') refresh(); };
     socket?.on('group-invite', onChange);
     socket?.on('user-removed', onChange);
+    // I was taken out of a specific group (vs. 'user-removed', which is a whole
+    // account being deleted) — drop it from my list live.
+    socket?.on('group-member-removed', onChange);
+    // Someone else's membership in a group I'm in changed (added/removed) —
+    // refresh so the member count on the card stays right.
+    socket?.on('group-updated', onChange);
     socket?.on('new-group-message', onChange);
     socket?.on('group-cleared', onChange);
     socket?.on('group-messages-deleted', onChange);
@@ -41,6 +47,8 @@ export default function Groups() {
     return () => {
       socket?.off('group-invite', onChange);
       socket?.off('user-removed', onChange);
+      socket?.off('group-member-removed', onChange);
+      socket?.off('group-updated', onChange);
       socket?.off('new-group-message', onChange);
       socket?.off('group-cleared', onChange);
       socket?.off('group-messages-deleted', onChange);
