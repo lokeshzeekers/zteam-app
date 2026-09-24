@@ -64,6 +64,26 @@ async function getConversation(req, res) {
   res.json({ messages, hasMore });
 }
 
+// Explicit "I'm looking at this chat right now" — marks everything the other
+// person sent me as read and tells THEM immediately, so their ticks update live
+// while I'm already inside the conversation (getConversation only does this
+// once, when the chat is first opened).
+async function markConversationRead(req, res) {
+  const me = req.user;
+  const otherId = Number(req.params.userId);
+  const unread = await Message.findAll({
+    where: { senderId: otherId, receiverId: me.id, readAt: null, deletedAt: null },
+    attributes: ['id'],
+  });
+  if (unread.length) {
+    const now = new Date();
+    const ids = unread.map((m) => m.id);
+    await Message.update({ readAt: now, deliveredAt: now }, { where: { id: ids, readAt: null } });
+    req.app.get('io')?.to(`user:${otherId}`).emit('messages-read', { messageIds: ids, by: me.id });
+  }
+  res.json({ success: true });
+}
+
 // list recent conversations (inbox) - most recent message per counterpart
 async function listInbox(req, res) {
   const me = req.user;
@@ -178,4 +198,4 @@ async function editMessage(req, res) {
   res.json({ message });
 }
 
-module.exports = { getConversation, listInbox, clearConversation, deleteMessages, editMessage };
+module.exports = { getConversation, listInbox, clearConversation, deleteMessages, editMessage, markConversationRead };

@@ -5,9 +5,10 @@ import { getSocket } from '../socket';
 import { useAuth } from '../context/AuthContext';
 import {
   AttachButton, FileAttachment, SendIcon, TrashIcon, PhoneIcon, VideoIcon, CheckSquareIcon,
-  PhoneIncomingIcon, PhoneMissedIcon, PhoneXIcon, EditIcon, CheckIcon,
+  PhoneIncomingIcon, PhoneMissedIcon, PhoneXIcon, CheckIcon,
 } from '../components/ChatIcons';
 import BackButton from '../components/BackButton';
+import MessageMenu from '../components/MessageMenu';
 import { useNotificationCenter } from '../context/NotificationCenterContext';
 
 function CallHistoryRow({ call, meId }) {
@@ -102,7 +103,12 @@ export default function ChatWindow({ onStartCall }) {
     const handler = ({ message }) => {
       if (message.senderId === Number(userId) || message.receiverId === Number(userId)) {
         setMessages((prev) => (prev.some((m) => m.id === message.id) ? prev : [...prev, message]));
-        if (message.senderId === Number(userId)) { markDMRead(Number(userId)); setOtherTyping(false); }
+        if (message.senderId === Number(userId)) {
+          markDMRead(Number(userId));
+          setOtherTyping(false);
+          // I'm looking at this chat: mark it read on the server so the sender's ticks turn read live.
+          api.post(`/api/messages/with/${userId}/read`).catch(() => {});
+        }
       }
     };
     const onDeleted = ({ messageIds, otherUserId: fromId }) => {
@@ -365,9 +371,7 @@ export default function ChatWindow({ onStartCall }) {
                     <span className="msg-text">{item.data.content}</span>
                   )}
                   {!selecting && item.data.senderId === user.id && item.data.type === 'text' && (
-                    <button type="button" className="msg-edit-btn" onClick={() => startEdit(item.data)} title="Edit message" aria-label="Edit message">
-                      <EditIcon size={13} />
-                    </button>
+                    <MessageMenu onEdit={() => startEdit(item.data)} />
                   )}
                   <div className="msg-time">
                     {item.data.editedAt && <span className="edited-tag">edited</span>}

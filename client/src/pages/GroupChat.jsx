@@ -4,8 +4,9 @@ import api from '../api';
 import { getSocket } from '../socket';
 import { useAuth } from '../context/AuthContext';
 import { usePresence } from '../context/PresenceContext';
-import { AttachButton, FileAttachment, SendIcon, TrashIcon, CheckSquareIcon, PhoneIncomingIcon, PhoneMissedIcon, PhoneXIcon, EditIcon, CheckIcon } from '../components/ChatIcons';
+import { AttachButton, FileAttachment, SendIcon, TrashIcon, CheckSquareIcon, PhoneIncomingIcon, PhoneMissedIcon, PhoneXIcon, CheckIcon } from '../components/ChatIcons';
 import BackButton from '../components/BackButton';
+import MessageMenu from '../components/MessageMenu';
 import { useNotificationCenter } from '../context/NotificationCenterContext';
 
 function GroupCallHistoryRow({ call }) {
@@ -479,9 +480,7 @@ export default function GroupChat() {
                     <span className="msg-text">{item.data.content}</span>
                   )}
                   {!selecting && item.data.senderId === user.id && item.data.type === 'text' && (
-                    <button type="button" className="msg-edit-btn" onClick={() => startEdit(item.data)} title="Edit message" aria-label="Edit message">
-                      <EditIcon size={13} />
-                    </button>
+                    <MessageMenu onEdit={() => startEdit(item.data)} />
                   )}
                   <div className="msg-time">
                     {item.data.editedAt && <span className="edited-tag">edited</span>}

@@ -45,6 +45,9 @@ export const EditIcon = (props) => (
 );
 // Single check = sent, used at 1x; the read-receipt row renders two of
 // these overlapped for "delivered"/"read" rather than a separate icon.
+export const ChevronDownIcon = (props) => (
+  <Icon {...props}><polyline points="6 9 12 15 18 9" /></Icon>
+);
 export const CheckIcon = (props) => (
   <Icon {...props}><polyline points="20 6 9 17 4 12" /></Icon>
 );
