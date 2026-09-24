@@ -116,25 +116,26 @@ function createWindow() {
       mainWindow.hide();
       return;
     }
-    // Windows/Linux: let the window close and the process exit immediately.
-    // We used to preventDefault() here and route through app.quit() ->
-    // 'before-quit', which blocked the real quit on an async handshake
-    // (waiting for the server to ack "go-inactive") before finally calling
-    // app.quit() a second time. That is what was leaving Zteam running as a
-    // background process after clicking X — needing a manual End Task —
-    // and, since the single-instance lock is only released once the process
-    // truly exits, made the next launch believe nothing was running, opening
-    // a second full session (and a third, and so on).
-    // The go-inactive ping is now fire-and-forget and never blocks the close —
-    // it's a presence nicety only: the server already marks the user offline
-    // the moment this socket disconnects (see the server's socket
-    // 'disconnect' handler), so nothing actually depends on it landing.
+    // Windows/Linux: let the window close and the process exit immediately,
+    // with NO renderer interaction on the way out.
+    //
+    // An earlier version of this handler called
+    // mainWindow.webContents.executeJavaScript(...) here to ping the server
+    // that we're going inactive before quitting. That call can hang
+    // indefinitely on a window that's mid-close — the IPC round trip to the
+    // renderer gets torn down along with the window without the promise ever
+    // resolving or rejecting, .catch() included. That dangling operation is
+    // what was actually keeping Zteam alive in the background needing a
+    // manual End Task, and, since the single-instance lock only releases
+    // once the process truly exits, is also why reopening kept starting
+    // brand new sessions instead of focusing the existing one.
+    //
+    // No renderer round trip is needed for correctness: the server already
+    // computes "is this person shown as online" as isActive AND a live
+    // socket connection (see server/src/utils/presence.js). The moment this
+    // process actually exits, the socket drops and presence flips to
+    // offline on its own — nothing here needs to wait for or trigger that.
     app.isQuiting = true;
-    try {
-      mainWindow.webContents.executeJavaScript('window.__zteamGoInactive ? window.__zteamGoInactive() : 0').catch(() => {});
-    } catch (err) {
-      // Renderer already gone / not reachable - nothing to tell, close proceeds regardless.
-    }
   });
 }
 

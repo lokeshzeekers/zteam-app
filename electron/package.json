@@ -1,6 +1,6 @@
 {
   "name": "zteam-desktop",
-  "version": "1.0.7",
+  "version": "1.0.8",
   "description": "Zteam - internal team communication desktop app",
   "main": "main.js",
   "author": {
