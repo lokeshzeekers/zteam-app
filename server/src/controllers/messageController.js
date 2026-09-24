@@ -5,6 +5,15 @@ const { isPresent } = require('../utils/presence');
 
 const PAGE_SIZE = 50;
 
+// A deleted message is never sent to a client with its content — only a
+// "this message was deleted" placeholder (id, sender, time, deletedAt) so both
+// people see the same thing in the chat and in the inbox preview.
+function toClient(m) {
+  const j = typeof m.toJSON === 'function' ? m.toJSON() : m;
+  if (!j.deletedAt) return j;
+  return { ...j, content: null, fileUrl: null, fileName: null };
+}
+
 // Paginated: most recent page by default, or the page just older than
 // `before` (a message id) when the client asks to load more history.
 // Returns ascending order (oldest-first, ready to append to the top of the
@@ -23,8 +32,8 @@ async function getConversation(req, res) {
   // point that opens this conversation - Recent Chats, Department -> person, Inbox -
   // goes through this one query and can't be bypassed by calling the API directly.
   const clear = await ConversationClear.findOne({ where: { userId: me.id, otherUserId: otherId } });
+  // Deleted messages are included (redacted) so they show as "This message was deleted".
   const where = {
-    deletedAt: null,
     [Op.or]: [
       { senderId: me.id, receiverId: otherId },
       { senderId: otherId, receiverId: me.id },
@@ -61,7 +70,7 @@ async function getConversation(req, res) {
     }
   }
 
-  res.json({ messages, hasMore });
+  res.json({ messages: messages.map(toClient), hasMore });
 }
 
 // Explicit "I'm looking at this chat right now" — marks everything the other
@@ -87,14 +96,28 @@ async function markConversationRead(req, res) {
 // list recent conversations (inbox) - most recent message per counterpart
 async function listInbox(req, res) {
   const me = req.user;
+  // Deleted messages stay in the list (redacted) so the preview reads "This message was deleted".
   const messages = await Message.findAll({
-    where: { deletedAt: null, [Op.or]: [{ senderId: me.id }, { receiverId: me.id }] },
+    where: { [Op.or]: [{ senderId: me.id }, { receiverId: me.id }] },
     order: [['createdAt', 'DESC']],
     limit: 1000,
   });
 
   const clears = await ConversationClear.findAll({ where: { userId: me.id } });
   const clearedAtByOther = Object.fromEntries(clears.map((c) => [c.otherUserId, c.clearedAt]));
+
+  // Unread = incoming, not read, NOT deleted, and after my own clear point. A message
+  // that was deleted (by its sender) never counts as "new", even if I never opened it.
+  const incoming = await Message.findAll({
+    where: { receiverId: me.id, readAt: null, deletedAt: null },
+    attributes: ['senderId', 'createdAt'],
+  });
+  const unreadBySender = {};
+  for (const m of incoming) {
+    const c = clearedAtByOther[m.senderId];
+    if (c && new Date(m.createdAt) <= new Date(c)) continue;
+    unreadBySender[m.senderId] = (unreadBySender[m.senderId] || 0) + 1;
+  }
 
   const seen = new Set();
   const threads = [];
@@ -122,7 +145,8 @@ async function listInbox(req, res) {
         isActive: isPresent(userMap[t.otherUserId]),
         avatarUrl: userMap[t.otherUserId].avatarUrl,
       } : null,
-      lastMessage: t.lastMessage,
+      lastMessage: toClient(t.lastMessage),
+      unread: (unreadBySender[t.otherUserId] || 0) > 0,
     })),
   });
 }

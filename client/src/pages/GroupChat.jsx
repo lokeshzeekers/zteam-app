@@ -4,7 +4,7 @@ import api from '../api';
 import { getSocket } from '../socket';
 import { useAuth } from '../context/AuthContext';
 import { usePresence } from '../context/PresenceContext';
-import { AttachButton, FileAttachment, SendIcon, TrashIcon, CheckSquareIcon, PhoneIncomingIcon, PhoneMissedIcon, PhoneXIcon, CheckIcon, VideoIcon, UsersIcon, SettingsIcon } from '../components/ChatIcons';
+import { AttachButton, FileAttachment, SendIcon, TrashIcon, CheckSquareIcon, PhoneIncomingIcon, PhoneMissedIcon, PhoneXIcon, CheckIcon, VideoIcon, PhoneIcon, BanIcon, UsersIcon, SettingsIcon } from '../components/ChatIcons';
 import BackButton from '../components/BackButton';
 import MessageMenu from '../components/MessageMenu';
 import { useNotificationCenter } from '../context/NotificationCenterContext';
@@ -134,8 +134,12 @@ export default function GroupChat() {
     };
     const onDeleted = ({ groupId: gid, messageIds }) => {
       if (String(gid) !== String(groupId)) return;
-      setMessages((prev) => prev.filter((m) => !messageIds.includes(m.id)));
+      // Real time: the message turns into "This message was deleted" for every member.
+      const at = new Date().toISOString();
+      setMessages((prev) => prev.map((m) => (messageIds.includes(m.id) ? { ...m, deletedAt: at, content: null, fileUrl: null, fileName: null } : m)));
       setSelectedIds((prev) => prev.filter((id) => !messageIds.includes(id)));
+      setEditingId((cur) => (messageIds.includes(cur) ? null : cur));
+      setSeenFor((cur) => (cur && messageIds.includes(cur.id) ? null : cur));
     };
     const onEdited = ({ groupId: gid, message }) => {
       if (String(gid) !== String(groupId)) return;
@@ -268,10 +272,10 @@ export default function GroupChat() {
     }
   }
 
-  async function startMeetingNow() {
+  async function startMeetingNow(callType = 'video') {
     try {
       const { data } = await api.post('/api/meetings', {
-        title: `${group?.name || 'Group'} call`, groupId: Number(groupId), callType: 'video', startNow: true,
+        title: `${group?.name || 'Group'} ${callType === 'audio' ? 'audio call' : 'call'}`, groupId: Number(groupId), callType, startNow: true,
       });
       navigate(`/meetings/${data.meeting.id}/room`);
     } catch (err) {
@@ -409,7 +413,10 @@ export default function GroupChat() {
             <UsersIcon size={19} />
             <span className="icon-badge">{group?.members.length || 0}</span>
           </button>
-          <button type="button" className="icon-btn-sm" onClick={startMeetingNow} title="Start a group video meeting now" aria-label="Start group video meeting">
+          <button type="button" className="icon-btn-sm" onClick={() => startMeetingNow('audio')} title="Start a group audio meeting now" aria-label="Start group audio meeting">
+            <PhoneIcon size={19} />
+          </button>
+          <button type="button" className="icon-btn-sm" onClick={() => startMeetingNow('video')} title="Start a group video meeting now" aria-label="Start group video meeting">
             <VideoIcon size={19} />
           </button>
           <button
@@ -471,7 +478,7 @@ export default function GroupChat() {
           <GroupCallHistoryRow key={`call-${item.data.id}`} call={item.data} />
         ) : (
           <div key={item.data.id} className={`msg ${item.data.senderId === user.id ? 'me' : 'them'} ${selecting && item.data.senderId === user.id ? 'selectable' : ''}`}>
-            {selecting && item.data.senderId === user.id && (
+            {selecting && item.data.senderId === user.id && !item.data.deletedAt && (
               <input
                 type="checkbox"
                 className="msg-select-checkbox"
@@ -483,7 +490,14 @@ export default function GroupChat() {
               {item.data.senderId !== user.id && (
                 <div className="msg-sender">{group?.members.find((mem) => mem.id === item.data.senderId)?.name || 'Member'}</div>
               )}
-              {editingId === item.data.id ? (
+              {item.data.deletedAt ? (
+                <>
+                  <span className="msg-text msg-deleted">
+                    <BanIcon size={14} /> {item.data.senderId === user.id ? 'You deleted this message' : 'This message was deleted'}
+                  </span>
+                  <div className="msg-time">{new Date(item.data.createdAt).toLocaleTimeString()}</div>
+                </>
+              ) : editingId === item.data.id ? (
                 <div className="msg-edit-form">
                   <textarea value={editText} onChange={(e) => setEditText(e.target.value)} rows={2} autoFocus />
                   <div className="msg-edit-actions">

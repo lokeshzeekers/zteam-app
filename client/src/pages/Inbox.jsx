@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../api';
 import { getSocket } from '../socket';
+import { useAuth } from '../context/AuthContext';
 import { usePresence } from '../context/PresenceContext';
 import { useNotificationCenter } from '../context/NotificationCenterContext';
 import { FileIcon, TrashIcon } from '../components/ChatIcons';
@@ -10,6 +11,7 @@ export default function Inbox() {
   const [threads, setThreads] = useState([]);
   const [loaded, setLoaded] = useState(false);
   const navigate = useNavigate();
+  const { user } = useAuth();
   const { isUserActive } = usePresence();
   const { isDMUnread, markDMRead } = useNotificationCenter();
 
@@ -41,6 +43,7 @@ export default function Inbox() {
     const socket = getSocket();
     socket?.on('new-message', load);
     socket?.on('message-sent', load);
+    socket?.on('messages-deleted', load); // a message was deleted: preview + unread update live
     socket?.on('user-removed', load);
     socket?.on('conversation-cleared', load);
     socket?.on('connect', load);
@@ -50,6 +53,7 @@ export default function Inbox() {
     return () => {
       socket?.off('new-message', load);
       socket?.off('message-sent', load);
+      socket?.off('messages-deleted', load);
       socket?.off('user-removed', load);
       socket?.off('conversation-cleared', load);
       socket?.off('connect', load);
@@ -78,9 +82,11 @@ export default function Inbox() {
                 <span className="muted small">{new Date(t.lastMessage.createdAt).toLocaleString()}</span>
               </div>
               <div className="muted thread-preview">
-                {t.lastMessage.type === 'file'
-                  ? <><FileIcon size={14} /> {t.lastMessage.fileName}</>
-                  : t.lastMessage.content}
+                {t.lastMessage.deletedAt
+                  ? <em className="msg-deleted-preview">{t.lastMessage.senderId === user.id ? 'You deleted this message' : 'This message was deleted'}</em>
+                  : t.lastMessage.type === 'file'
+                    ? <><FileIcon size={14} /> {t.lastMessage.fileName}</>
+                    : t.lastMessage.content}
               </div>
             </div>
             {isDMUnread(t.user.id) && <span className="unread-dot" title="New message" aria-label="New unread message" />}

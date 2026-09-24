@@ -584,3 +584,8 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .seen-check svg + svg { margin-left: -8px; }
 .seen-row.pending .seen-check { color: var(--muted); }
 .danger-zone .edit-modal-actions { position: static; background: transparent; padding: 0; margin: 8px 0 0; }
+
+/* "This message was deleted" placeholder (chat + group) and its inbox preview */
+.msg-text.msg-deleted { display: inline-flex; align-items: center; gap: 6px; font-style: italic; opacity: 0.85; }
+.msg.them .msg-text.msg-deleted { color: var(--muted); opacity: 1; }
+.msg-deleted-preview { font-style: italic; opacity: 0.8; }

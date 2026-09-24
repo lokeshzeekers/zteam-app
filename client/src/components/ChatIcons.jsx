@@ -57,6 +57,9 @@ export const SettingsIcon = (props) => (
 export const EyeIcon = (props) => (
   <Icon {...props}><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" /><circle cx="12" cy="12" r="3" /></Icon>
 );
+export const BanIcon = (props) => (
+  <Icon {...props}><circle cx="12" cy="12" r="10" /><line x1="4.93" y1="4.93" x2="19.07" y2="19.07" /></Icon>
+);
 export const CheckIcon = (props) => (
   <Icon {...props}><polyline points="20 6 9 17 4 12" /></Icon>
 );

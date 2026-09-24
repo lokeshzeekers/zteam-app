@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Notification, Tray, Menu, ipcMain, nativeImage } = require('electron');
+const { app, BrowserWindow, Notification, ipcMain, nativeImage } = require('electron');
 const { autoUpdater } = require('electron-updater');
 const path = require('path');
 
@@ -7,20 +7,18 @@ const path = require('path');
 app.setAppUserModelId('com.zteam.desktop');
 
 let mainWindow;
-let tray;
 
 // ---- Single instance ----------------------------------------------------------
-// Closing the window only hides Zteam to the tray (so messages/calls keep
-// arriving), which means the process is still alive. Without this lock, opening
-// the app again from the desktop/Start menu started ANOTHER full copy (new
-// window, new tray icon, new server session) every time. Now a second launch
-// just brings the running window back and exits immediately.
+// Closing the window quits Zteam completely (see the 'close' handler). This lock is
+// the safety net for double-clicks and repeated launches: a second launch never
+// starts another full copy (window, server session, taskbar entry) — it just brings
+// the running window to the front and exits immediately.
 const gotTheLock = app.requestSingleInstanceLock();
 if (!gotTheLock) {
   app.exit(0);
 }
 
-// Bring the (possibly hidden-to-tray or minimized) window to the front.
+// Bring the (possibly hidden or minimized) window to the front.
 function showMainWindow() {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   if (mainWindow.isMinimized()) mainWindow.restore();
@@ -57,7 +55,7 @@ const FLASH_RESTART_GAP_MS = 300; // pause between the STOP and the next START
 let flashTimer = null;
 let flashRestartTimer = null;
 
-// A window that is hidden to the tray has no taskbar button to blink.
+// A hidden window has no taskbar button to blink.
 function canFlash() {
   return !!mainWindow && !mainWindow.isDestroyed()
     && (mainWindow.isVisible() || mainWindow.isMinimized())
@@ -111,25 +109,18 @@ function createWindow() {
   });
 
   mainWindow.on('close', (e) => {
-    // Minimize to tray instead of quitting, so the app keeps receiving
-    // messages/calls in the background (common for chat apps).
-    if (!app.isQuiting) {
+    if (app.isQuiting) return; // a real quit is already underway
+    if (process.platform === 'darwin') {
+      // macOS convention: closing the window keeps the app in the Dock.
       e.preventDefault();
       mainWindow.hide();
+      return;
     }
+    // Windows/Linux: closing the window fully quits Zteam. Going through app.quit() runs
+    // the before-quit handshake below, so the server is told we went inactive first.
+    e.preventDefault();
+    app.quit();
   });
-}
-
-function createTray() {
-  const icon = nativeImage.createFromPath(path.join(__dirname, 'assets', 'icon.png'));
-  tray = new Tray(icon.resize({ width: 16, height: 16 }));
-  const menu = Menu.buildFromTemplate([
-    { label: 'Open Zteam', click: showMainWindow },
-    { label: 'Quit', click: () => { app.isQuiting = true; app.quit(); } },
-  ]);
-  tray.setToolTip('Zteam');
-  tray.setContextMenu(menu);
-  tray.on('click', showMainWindow);
 }
 
 // Windows-only: a small red dot drawn directly on the taskbar icon itself
@@ -154,7 +145,6 @@ function clearOverlayBadge() {
 app.whenReady().then(() => {
   if (!gotTheLock) return; // a duplicate launch: the running instance handles it
   createWindow();
-  createTray();
 
   // Check for a newer Zteam desktop release.
   // GitHub Releases is configured in electron/package.json.
@@ -178,7 +168,7 @@ app.on('window-all-closed', () => {
 // A renderer 'beforeunload' emit races the process exit and can be lost, so the
 // main process asks the page to send 'go-inactive', waits for the server's
 // acknowledgement (max ~2s), and only then lets the quit continue.
-// Hiding to the tray never reaches this (that's just window.hide()).
+// (On macOS closing the window only hides it and never reaches this.)
 let quitState = 'idle'; // idle -> pending (waiting for the server) -> done
 
 async function goInactiveBeforeQuit() {
@@ -197,7 +187,7 @@ async function goInactiveBeforeQuit() {
 }
 
 app.on('before-quit', (event) => {
-  app.isQuiting = true; // a real quit is underway: the close handler must not hide-to-tray instead
+  app.isQuiting = true; // a real quit is underway: the close handler must let the window close
   stopContinuousFlash();
   if (quitState === 'done') return; // handshake finished: let the quit proceed
   event.preventDefault();
@@ -207,12 +197,26 @@ app.on('before-quit', (event) => {
 });
 
 // ---- IPC: notifications + taskbar blink + badge, triggered from the web UI ----
-ipcMain.on('notify', (event, { title, body }) => {
+// Notifications by tag, so one can be taken down again (e.g. its message was deleted).
+const activeNotifications = new Map();
+
+ipcMain.on('notify', (event, { title, body, tag }) => {
   if (Notification.isSupported()) {
     const n = new Notification({ title: title || 'Zteam', body: body || '' });
     n.on('click', showMainWindow);
+    if (tag) {
+      activeNotifications.get(tag)?.close();
+      activeNotifications.set(tag, n);
+      n.on('close', () => { if (activeNotifications.get(tag) === n) activeNotifications.delete(tag); });
+    }
     n.show();
   }
+});
+
+ipcMain.on('close-notification', (event, tag) => {
+  if (!tag) return;
+  activeNotifications.get(tag)?.close();
+  activeNotifications.delete(tag);
 });
 
 ipcMain.on('flash-taskbar', () => {

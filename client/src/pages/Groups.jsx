@@ -34,6 +34,7 @@ export default function Groups() {
     socket?.on('user-removed', onChange);
     socket?.on('new-group-message', onChange);
     socket?.on('group-cleared', onChange);
+    socket?.on('group-messages-deleted', onChange);
     socket?.on('connect', onChange);
     document.addEventListener('visibilitychange', onVisible);
     window.addEventListener('focus', onChange);
@@ -42,6 +43,7 @@ export default function Groups() {
       socket?.off('user-removed', onChange);
       socket?.off('new-group-message', onChange);
       socket?.off('group-cleared', onChange);
+      socket?.off('group-messages-deleted', onChange);
       socket?.off('connect', onChange);
       document.removeEventListener('visibilitychange', onVisible);
       window.removeEventListener('focus', onChange);

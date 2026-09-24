@@ -1,7 +1,8 @@
-import { createContext, useContext, useEffect, useState, useCallback } from 'react';
+import { createContext, useContext, useEffect, useState, useCallback, useRef } from 'react';
 import { useAuth } from './AuthContext';
 import { getSocket } from '../socket';
 import api from '../api';
+import { clearFlash } from '../notify';
 
 const NotificationCenterContext = createContext(null);
 
@@ -20,24 +21,37 @@ export function NotificationCenterProvider({ children }) {
   const [unreadGroups, setUnreadGroups] = useState(new Set());
   const [meetingAlerts, setMeetingAlerts] = useState(new Set());
 
-  const seed = useCallback(async () => {
+  // Latest counts, readable from socket handlers without stale closures.
+  const countsRef = useRef({ dms: 0, groups: 0, meetings: 0 });
+  countsRef.current = { dms: unreadDMs.size, groups: unreadGroups.size, meetings: meetingAlerts.size };
+
+  // Returns how many are unread now (or null if the request failed).
+  const seedDMs = useCallback(async () => {
     try {
       const { data } = await api.get('/api/messages/inbox');
-      const unread = data.threads
-        .filter((t) => t.user && t.lastMessage.senderId === t.user.id && !t.lastMessage.readAt)
-        .map((t) => t.user.id);
+      // The server counts only incoming, unread, NOT-deleted messages after my clear point.
+      const unread = data.threads.filter((t) => t.user && t.unread).map((t) => t.user.id);
       setUnreadDMs(new Set(unread));
-    } catch (e) { /* not fatal, badges just start empty */ }
+      return unread.length;
+    } catch (e) { return null; /* not fatal, badges just start empty */ }
+  }, []);
+  const seedGroups = useCallback(async () => {
     try {
       const { data } = await api.get('/api/groups');
-      setUnreadGroups(new Set(data.groups.filter((g) => g.unread).map((g) => g.id)));
-    } catch (e) { /* ignore */ }
+      const unread = data.groups.filter((g) => g.unread).map((g) => g.id);
+      setUnreadGroups(new Set(unread));
+      return unread.length;
+    } catch (e) { return null; }
+  }, []);
+  const seed = useCallback(async () => {
+    await seedDMs();
+    await seedGroups();
     try {
       const { data } = await api.get('/api/meetings');
       const ongoing = data.meetings.filter((m) => m.status === 'ongoing').map((m) => m.id);
       setMeetingAlerts(new Set(ongoing));
     } catch (e) { /* ignore */ }
-  }, []);
+  }, [seedDMs, seedGroups]);
 
   useEffect(() => {
     if (!user) {
@@ -71,12 +85,22 @@ export function NotificationCenterProvider({ children }) {
     // Chat / group cleared from another window or device: it is no longer "new" here either.
     const onConversationCleared = ({ otherUserId }) => markDMRead(otherUserId);
     const onGroupCleared = ({ groupId }) => markGroupRead(groupId);
+    // A message was deleted by its sender: recompute what is really still unread, and if
+    // nothing is left, stop the taskbar blink / badge that the deleted message started.
+    const afterDelete = async () => {
+      const dms = await seedDMs();
+      const groups = await seedGroups();
+      const c = countsRef.current;
+      if (dms === 0 && groups === 0 && c.meetings === 0) clearFlash();
+    };
     const onReconnect = () => seed();
 
     socket.on('new-message', onNewMessage);
     socket.on('new-group-message', onNewGroupMessage);
     socket.on('meeting-invite', onMeetingAlert);
     socket.on('meeting-starting', onMeetingAlert);
+    socket.on('messages-deleted', afterDelete);
+    socket.on('group-messages-deleted', afterDelete);
     socket.on('conversation-cleared', onConversationCleared);
     socket.on('group-cleared', onGroupCleared);
     socket.on('connect', onReconnect);
@@ -85,6 +109,8 @@ export function NotificationCenterProvider({ children }) {
       socket.off('new-group-message', onNewGroupMessage);
       socket.off('meeting-invite', onMeetingAlert);
       socket.off('meeting-starting', onMeetingAlert);
+      socket.off('messages-deleted', afterDelete);
+      socket.off('group-messages-deleted', afterDelete);
       socket.off('conversation-cleared', onConversationCleared);
       socket.off('group-cleared', onGroupCleared);
       socket.off('connect', onReconnect);

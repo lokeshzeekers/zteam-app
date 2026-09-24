@@ -36,6 +36,14 @@ async function createGroup(req, res) {
   res.status(201).json({ group });
 }
 
+// A deleted message is never sent to a client with its content — only a
+// "this message was deleted" placeholder.
+function toClient(m) {
+  const j = typeof m.toJSON === 'function' ? m.toJSON() : m;
+  if (!j.deletedAt) return j;
+  return { ...j, content: null, fileUrl: null, fileName: null };
+}
+
 async function listMyGroups(req, res) {
   const memberships = await GroupMember.findAll({ where: { userId: req.user.id } });
   const groupIds = memberships.map((m) => m.groupId);
@@ -59,8 +67,13 @@ async function listMyGroups(req, res) {
     });
     const members = await GroupMember.findAll({ where: { groupId: g.id } });
     const users = await User.findAll({ where: { id: members.map((m) => m.userId) } });
+    // Unread = someone ELSE's message, not deleted, newer than when I last caught up
+    // (and newer than my own clear point). Deleted messages never count as "new".
     const lastReadAt = lastReadByGroup[g.id];
-    const unread = !!latestMessage && (!lastReadAt || new Date(latestMessage.createdAt) > new Date(lastReadAt));
+    const since = [lastReadAt, hiddenAt].filter(Boolean).map((d) => new Date(d)).sort((a, b) => b - a)[0];
+    const unreadWhere = { groupId: g.id, deletedAt: null, senderId: { [Op.ne]: req.user.id } };
+    if (since) unreadWhere.createdAt = { [Op.gt]: since };
+    const unread = !!latestMessage && (await GroupMessage.count({ where: unreadWhere })) > 0;
     result.push({
       id: g.id, name: g.name, description: g.description, createdBy: g.createdBy,
       members: users.map((u) => ({ id: u.id, name: u.name, position: u.position })),
@@ -137,7 +150,8 @@ async function getGroupMessages(req, res) {
   const groupId = req.params.id;
   if (!(await isMember(groupId, req.user.id))) return res.status(403).json({ error: 'Not a member of this group' });
 
-  const where = { groupId, deletedAt: null };
+  // Deleted messages are included (redacted) so they show as "This message was deleted".
+  const where = { groupId };
   // Messages I cleared (see hideGroup) stay out of MY history only.
   const hide = await GroupHide.findOne({ where: { userId: req.user.id, groupId } });
   if (hide) where.createdAt = { [Op.gt]: hide.hiddenAt };
@@ -157,7 +171,7 @@ async function getGroupMessages(req, res) {
     await markRead(req.user.id, Number(groupId), req.app.get('io'));
   }
 
-  res.json({ messages, hasMore });
+  res.json({ messages: messages.map(toClient), hasMore });
 }
 
 // Shared by getGroupMessages and markGroupRead — findOrCreate+save rather than
@@ -232,7 +246,12 @@ async function deleteGroupMessages(req, res) {
   const deletedIds = messages.map((m) => m.id);
   await GroupMessage.update({ deletedAt: new Date() }, { where: { id: deletedIds } });
 
-  req.app.get('io').to(`group:${groupId}`).emit('group-messages-deleted', { groupId: Number(groupId), messageIds: deletedIds });
+  // To every member's own room (not just the open chat room) so members who are on the
+  // Groups list / another page also drop the "new message" highlight in real time.
+  const members = await GroupMember.findAll({ where: { groupId }, attributes: ['userId'] });
+  if (members.length) {
+    req.app.get('io').to(members.map((m) => `user:${m.userId}`)).emit('group-messages-deleted', { groupId: Number(groupId), messageIds: deletedIds });
+  }
 
   res.json({ success: true, deletedIds });
 }

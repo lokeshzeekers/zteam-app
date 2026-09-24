@@ -228,13 +228,13 @@ export default function CallManager() {
     const socket = getSocket();
     if (!socket) return undefined;
     const onMsg = ({ message }) => {
-      notifyDesktop({ title: 'New message', body: message.type === 'file' ? 'Sent a file' : message.content });
+      notifyDesktop({ title: 'New message', body: message.type === 'file' ? 'Sent a file' : message.content, tag: `msg-${message.id}` });
       flashTaskbar();
       playPing();
     };
     const onGroupMsg = ({ message }) => {
       if (message.senderId === meRef.current) return; // your own message (your other devices receive it too)
-      notifyDesktop({ title: 'New group message', body: message.type === 'file' ? 'Sent a file' : message.content });
+      notifyDesktop({ title: 'New group message', body: message.type === 'file' ? 'Sent a file' : message.content, tag: `gmsg-${message.id}` });
       flashTaskbar();
       playPing();
     };
@@ -251,14 +251,21 @@ export default function CallManager() {
     const onMeetingCancelled = ({ title }) => {
       notifyDesktop({ title: 'Meeting cancelled', body: `"${title}" was cancelled` });
     };
+    // A message that gets deleted: take its toast down too, so a deleted message doesn't linger as a notification.
+    const onMsgsDeleted = ({ messageIds = [] }) => messageIds.forEach((id) => closeNotification(`msg-${id}`));
+    const onGroupMsgsDeleted = ({ messageIds = [] }) => messageIds.forEach((id) => closeNotification(`gmsg-${id}`));
     socket.on('new-message', onMsg);
     socket.on('new-group-message', onGroupMsg);
+    socket.on('messages-deleted', onMsgsDeleted);
+    socket.on('group-messages-deleted', onGroupMsgsDeleted);
     socket.on('meeting-invite', onMeetingInvite);
     socket.on('meeting-starting', onMeetingStarting);
     socket.on('meeting-cancelled', onMeetingCancelled);
     return () => {
       socket.off('new-message', onMsg);
       socket.off('new-group-message', onGroupMsg);
+      socket.off('messages-deleted', onMsgsDeleted);
+      socket.off('group-messages-deleted', onGroupMsgsDeleted);
       socket.off('meeting-invite', onMeetingInvite);
       socket.off('meeting-starting', onMeetingStarting);
       socket.off('meeting-cancelled', onMeetingCancelled);
