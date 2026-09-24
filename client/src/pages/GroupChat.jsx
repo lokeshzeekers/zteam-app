@@ -4,7 +4,7 @@ import api from '../api';
 import { getSocket } from '../socket';
 import { useAuth } from '../context/AuthContext';
 import { usePresence } from '../context/PresenceContext';
-import { AttachButton, FileAttachment, SendIcon, TrashIcon, CheckSquareIcon, PhoneIncomingIcon, PhoneMissedIcon, PhoneXIcon, CheckIcon } from '../components/ChatIcons';
+import { AttachButton, FileAttachment, SendIcon, TrashIcon, CheckSquareIcon, PhoneIncomingIcon, PhoneMissedIcon, PhoneXIcon, CheckIcon, VideoIcon, UsersIcon, SettingsIcon } from '../components/ChatIcons';
 import BackButton from '../components/BackButton';
 import MessageMenu from '../components/MessageMenu';
 import { useNotificationCenter } from '../context/NotificationCenterContext';
@@ -62,6 +62,9 @@ export default function GroupChat() {
   const [uploading, setUploading] = useState(false);
   const [showMembers, setShowMembers] = useState(false);
   const [showEdit, setShowEdit] = useState(false);
+  const [seenFor, setSeenFor] = useState(null); // message whose "Seen by" list is open
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [deleteConfirmText, setDeleteConfirmText] = useState('');
   const [editName, setEditName] = useState('');
   const [candidates, setCandidates] = useState([]);
   const [addIds, setAddIds] = useState([]);
@@ -278,6 +281,8 @@ export default function GroupChat() {
 
   async function openEdit() {
     setEditError('');
+    setConfirmingDelete(false);
+    setDeleteConfirmText('');
     setEditName(group.name);
     setAddIds([]);
     setRemoveIds([]);
@@ -315,13 +320,15 @@ export default function GroupChat() {
     }
   }
 
+  // Only reachable from Group settings -> Danger zone, and only after the group
+  // name has been typed to confirm (see the button's disabled state below).
   async function deleteGroup() {
-    if (!confirm(`Delete "${group.name}"? This removes the group and its messages for everyone. This cannot be undone.`)) return;
+    if (deleteConfirmText.trim() !== group.name) return;
     try {
       await api.delete(`/api/groups/${groupId}`);
       navigate('/groups');
     } catch (err) {
-      alert(err?.response?.data?.error || 'Could not delete group');
+      setEditError(err?.response?.data?.error || 'Could not delete group');
     }
   }
 
@@ -342,7 +349,7 @@ export default function GroupChat() {
     setEditingId(null);
     setEditText('');
   }
-  async function saveEdit(id) {
+  async function saveMessageEdit(id) {
     const content = editText.trim();
     if (!content) return;
     try {
@@ -392,10 +399,19 @@ export default function GroupChat() {
           <strong>{group?.name || 'Group'}</strong>
         </div>
         <div className="chat-header-actions">
-          <button type="button" className="btn-secondary btn-sm" onClick={() => setShowMembers((s) => !s)}>
-            👥 Members ({group?.members.length || 0})
+          <button
+            type="button"
+            className={`icon-btn-sm has-badge${showMembers ? ' active' : ''}`}
+            onClick={() => setShowMembers((s) => !s)}
+            title={`Members (${group?.members.length || 0})`}
+            aria-label={`Members (${group?.members.length || 0})`}
+          >
+            <UsersIcon size={19} />
+            <span className="icon-badge">{group?.members.length || 0}</span>
           </button>
-          <button type="button" className="btn-secondary btn-sm" onClick={startMeetingNow} title="Start a group video meeting now">🎥 Start Meeting</button>
+          <button type="button" className="icon-btn-sm" onClick={startMeetingNow} title="Start a group video meeting now" aria-label="Start group video meeting">
+            <VideoIcon size={19} />
+          </button>
           <button
             type="button"
             className={`icon-btn-sm${selecting ? ' active' : ''}`}
@@ -405,8 +421,11 @@ export default function GroupChat() {
           >
             <CheckSquareIcon size={19} />
           </button>
-          {isOwner && <button type="button" className="btn-secondary btn-sm" onClick={openEdit}>Edit</button>}
-          {isOwner && <button type="button" className="btn-danger btn-sm" onClick={deleteGroup}>Delete</button>}
+          {isOwner && (
+            <button type="button" className="icon-btn-sm" onClick={openEdit} title="Group settings" aria-label="Group settings">
+              <SettingsIcon size={19} />
+            </button>
+          )}
           <button type="button" className="icon-btn-sm danger" onClick={clearMessagesForMe} title="Delete all messages (for me)" aria-label="Delete all messages for me">
             <TrashIcon size={19} />
           </button>
@@ -469,7 +488,7 @@ export default function GroupChat() {
                   <textarea value={editText} onChange={(e) => setEditText(e.target.value)} rows={2} autoFocus />
                   <div className="msg-edit-actions">
                     <button type="button" className="btn-secondary btn-sm" onClick={cancelEdit}>Cancel</button>
-                    <button type="button" className="btn-primary btn-sm" onClick={() => saveEdit(item.data.id)}>Save</button>
+                    <button type="button" className="btn-primary btn-sm" onClick={() => saveMessageEdit(item.data.id)}>Save</button>
                   </div>
                 </div>
               ) : (
@@ -479,8 +498,11 @@ export default function GroupChat() {
                   ) : (
                     <span className="msg-text">{item.data.content}</span>
                   )}
-                  {!selecting && item.data.senderId === user.id && item.data.type === 'text' && (
-                    <MessageMenu onEdit={() => startEdit(item.data)} />
+                  {!selecting && item.data.senderId === user.id && (
+                    <MessageMenu
+                      onSeenBy={() => setSeenFor(item.data)}
+                      onEdit={item.data.type === 'text' ? () => startEdit(item.data) : undefined}
+                    />
                   )}
                   <div className="msg-time">
                     {item.data.editedAt && <span className="edited-tag">edited</span>}
@@ -508,10 +530,45 @@ export default function GroupChat() {
         <button type="submit" className="send-btn"><SendIcon size={16} /> Send</button>
       </form>
 
+      {seenFor && group && (() => {
+        const others = group.members
+          .filter((m) => m.id !== user.id)
+          .map((m) => ({ ...m, seen: !!reads[m.id] && new Date(reads[m.id]) >= new Date(seenFor.createdAt) }));
+        const seen = others.filter((m) => m.seen);
+        const notSeen = others.filter((m) => !m.seen);
+        return (
+          <div className="call-modal" onClick={() => setSeenFor(null)}>
+            <div className="edit-modal-inner seen-modal" onClick={(e) => e.stopPropagation()}>
+              <h3>Message seen by</h3>
+              <div className="seen-section-title">Seen ({seen.length})</div>
+              {seen.length === 0 && <p className="muted small">Nobody has seen this message yet.</p>}
+              {seen.map((m) => (
+                <div className="seen-row" key={m.id}>
+                  <span className="seen-check"><CheckIcon size={14} /><CheckIcon size={14} /></span>
+                  <span>{m.name}</span>
+                  <span className="muted small">{m.position || 'Member'}</span>
+                </div>
+              ))}
+              {notSeen.length > 0 && <div className="seen-section-title">Not seen yet ({notSeen.length})</div>}
+              {notSeen.map((m) => (
+                <div className="seen-row pending" key={m.id}>
+                  <span className="seen-check"><CheckIcon size={14} /></span>
+                  <span>{m.name}</span>
+                  <span className="muted small">{m.position || 'Member'}</span>
+                </div>
+              ))}
+              <div className="edit-modal-actions">
+                <button type="button" className="btn-secondary" onClick={() => setSeenFor(null)}>Close</button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
       {showEdit && (
         <div className="call-modal" onClick={() => setShowEdit(false)}>
           <div className="edit-modal-inner" onClick={(e) => e.stopPropagation()}>
-            <h3>Edit Group</h3>
+            <h3>Group settings</h3>
             <form className="profile-form flat" onSubmit={saveEdit}>
               {editError && <div className="auth-error">{editError}</div>}
               <label>Group name</label>
@@ -549,6 +606,36 @@ export default function GroupChat() {
                 <button type="submit" disabled={savingEdit}>{savingEdit ? 'Saving...' : 'Save changes'}</button>
               </div>
             </form>
+
+            {isOwner && (
+              <div className="danger-zone">
+                <div className="danger-zone-title">Danger zone</div>
+                {!confirmingDelete ? (
+                  <>
+                    <p className="muted small">Deleting the group removes it and all of its messages for every member. This is different from deleting the messages just for yourself.</p>
+                    <button type="button" className="btn-outline-danger" onClick={() => setConfirmingDelete(true)}>Delete this group…</button>
+                  </>
+                ) : (
+                  <>
+                    <p className="small">
+                      This permanently deletes <strong>{group.name}</strong> and all its messages for <strong>every member</strong>. This cannot be undone.
+                      Type the group name to confirm.
+                    </p>
+                    <input
+                      value={deleteConfirmText}
+                      onChange={(e) => setDeleteConfirmText(e.target.value)}
+                      placeholder={group.name}
+                      aria-label="Type the group name to confirm deletion"
+                      autoFocus
+                    />
+                    <div className="edit-modal-actions">
+                      <button type="button" className="btn-secondary" onClick={() => { setConfirmingDelete(false); setDeleteConfirmText(''); }}>Cancel</button>
+                      <button type="button" className="btn-danger" disabled={deleteConfirmText.trim() !== group.name} onClick={deleteGroup}>Delete group permanently</button>
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
           </div>
         </div>
       )}

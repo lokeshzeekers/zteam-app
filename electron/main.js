@@ -9,6 +9,32 @@ app.setAppUserModelId('com.zteam.desktop');
 let mainWindow;
 let tray;
 
+// ---- Single instance ----------------------------------------------------------
+// Closing the window only hides Zteam to the tray (so messages/calls keep
+// arriving), which means the process is still alive. Without this lock, opening
+// the app again from the desktop/Start menu started ANOTHER full copy (new
+// window, new tray icon, new server session) every time. Now a second launch
+// just brings the running window back and exits immediately.
+const gotTheLock = app.requestSingleInstanceLock();
+if (!gotTheLock) {
+  app.exit(0);
+}
+
+// Bring the (possibly hidden-to-tray or minimized) window to the front.
+function showMainWindow() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+  stopContinuousFlash();
+  clearOverlayBadge();
+}
+
+app.on('second-instance', () => {
+  if (!mainWindow || mainWindow.isDestroyed()) createWindow();
+  else showMainWindow();
+});
+
 // Point the bundled desktop client at your production server.
 // Set this to your Hostinger VPS domain, e.g. https://zteam.yourdomain.com
 // (The web build embeds this at build-time via VITE_API_URL; this is a fallback
@@ -98,12 +124,12 @@ function createTray() {
   const icon = nativeImage.createFromPath(path.join(__dirname, 'assets', 'icon.png'));
   tray = new Tray(icon.resize({ width: 16, height: 16 }));
   const menu = Menu.buildFromTemplate([
-    { label: 'Open Zteam', click: () => { mainWindow.show(); stopContinuousFlash(); clearOverlayBadge(); } },
+    { label: 'Open Zteam', click: showMainWindow },
     { label: 'Quit', click: () => { app.isQuiting = true; app.quit(); } },
   ]);
   tray.setToolTip('Zteam');
   tray.setContextMenu(menu);
-  tray.on('click', () => { mainWindow.show(); stopContinuousFlash(); clearOverlayBadge(); });
+  tray.on('click', showMainWindow);
 }
 
 // Windows-only: a small red dot drawn directly on the taskbar icon itself
@@ -126,6 +152,7 @@ function clearOverlayBadge() {
 }
 
 app.whenReady().then(() => {
+  if (!gotTheLock) return; // a duplicate launch: the running instance handles it
   createWindow();
   createTray();
 
@@ -139,6 +166,7 @@ app.whenReady().then(() => {
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    else showMainWindow();
   });
 });
 
@@ -182,7 +210,7 @@ app.on('before-quit', (event) => {
 ipcMain.on('notify', (event, { title, body }) => {
   if (Notification.isSupported()) {
     const n = new Notification({ title: title || 'Zteam', body: body || '' });
-    n.on('click', () => { mainWindow.show(); mainWindow.focus(); stopContinuousFlash(); clearOverlayBadge(); });
+    n.on('click', showMainWindow);
     n.show();
   }
 });

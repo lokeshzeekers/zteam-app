@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
-import { ChevronDownIcon, EditIcon } from './ChatIcons';
+import { ChevronDownIcon, EditIcon, EyeIcon } from './ChatIcons';
 
 // Small dropdown on the sender's own message bubble (shown on hover, always
-// visible on touch screens). Currently offers "Edit".
-export default function MessageMenu({ onEdit }) {
+// visible on touch screens). Each action is optional: "Edit" (text messages)
+// and "Seen by" (group messages).
+export default function MessageMenu({ onEdit, onSeenBy }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
 
@@ -34,9 +35,16 @@ export default function MessageMenu({ onEdit }) {
       </button>
       {open && (
         <div className="msg-menu-list" role="menu">
-          <button type="button" className="msg-menu-item" role="menuitem" onClick={() => { setOpen(false); onEdit(); }}>
-            <EditIcon size={14} /> Edit
-          </button>
+          {onSeenBy && (
+            <button type="button" className="msg-menu-item" role="menuitem" onClick={() => { setOpen(false); onSeenBy(); }}>
+              <EyeIcon size={14} /> Seen by
+            </button>
+          )}
+          {onEdit && (
+            <button type="button" className="msg-menu-item" role="menuitem" onClick={() => { setOpen(false); onEdit(); }}>
+              <EditIcon size={14} /> Edit
+            </button>
+          )}
         </div>
       )}
     </div>

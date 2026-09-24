@@ -11,7 +11,7 @@ export default function Inbox() {
   const [loaded, setLoaded] = useState(false);
   const navigate = useNavigate();
   const { isUserActive } = usePresence();
-  const { isDMUnread } = useNotificationCenter();
+  const { isDMUnread, markDMRead } = useNotificationCenter();
 
   async function deleteConversation(e, otherUserId) {
     e.stopPropagation(); // don't also navigate into the chat
@@ -19,6 +19,7 @@ export default function Inbox() {
     try {
       await api.delete(`/api/messages/with/${otherUserId}`);
       setThreads((prev) => prev.filter((t) => t.user?.id !== otherUserId));
+      markDMRead(otherUserId); // deleted before opening: it must not keep showing as "new message"
     } catch (err) {
       alert(err?.response?.data?.error || 'Could not delete the conversation');
     }

@@ -68,18 +68,25 @@ export function NotificationCenterProvider({ children }) {
     const onMeetingAlert = ({ meeting }) => {
       setMeetingAlerts((prev) => new Set(prev).add(meeting.id));
     };
+    // Chat / group cleared from another window or device: it is no longer "new" here either.
+    const onConversationCleared = ({ otherUserId }) => markDMRead(otherUserId);
+    const onGroupCleared = ({ groupId }) => markGroupRead(groupId);
     const onReconnect = () => seed();
 
     socket.on('new-message', onNewMessage);
     socket.on('new-group-message', onNewGroupMessage);
     socket.on('meeting-invite', onMeetingAlert);
     socket.on('meeting-starting', onMeetingAlert);
+    socket.on('conversation-cleared', onConversationCleared);
+    socket.on('group-cleared', onGroupCleared);
     socket.on('connect', onReconnect);
     return () => {
       socket.off('new-message', onNewMessage);
       socket.off('new-group-message', onNewGroupMessage);
       socket.off('meeting-invite', onMeetingAlert);
       socket.off('meeting-starting', onMeetingAlert);
+      socket.off('conversation-cleared', onConversationCleared);
+      socket.off('group-cleared', onGroupCleared);
       socket.off('connect', onReconnect);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
