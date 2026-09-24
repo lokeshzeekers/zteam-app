@@ -1,7 +1,9 @@
 const { Op } = require('sequelize');
-const { Group, GroupMember, GroupMessage, User, GroupHide } = require('../models');
+const { Group, GroupMember, GroupMessage, User, GroupHide, GroupRead } = require('../models');
 const { canCommunicate } = require('../utils/permissions');
 const { isPresent } = require('../utils/presence');
+
+const PAGE_SIZE = 50;
 
 async function isMember(groupId, userId) {
   const row = await GroupMember.findOne({ where: { groupId, userId } });
@@ -41,23 +43,29 @@ async function listMyGroups(req, res) {
 
   const hides = await GroupHide.findAll({ where: { userId: req.user.id, groupId: groupIds } });
   const hiddenAtByGroup = Object.fromEntries(hides.map((h) => [h.groupId, h.hiddenAt]));
+  const reads = await GroupRead.findAll({ where: { userId: req.user.id, groupId: groupIds } });
+  const lastReadByGroup = Object.fromEntries(reads.map((r) => [r.groupId, r.lastReadAt]));
 
   const result = [];
   for (const g of groups) {
     const hiddenAt = hiddenAtByGroup[g.id];
+    const latestMessage = await GroupMessage.findOne({
+      where: { groupId: g.id, deletedAt: null },
+      order: [['createdAt', 'DESC']],
+    });
     if (hiddenAt) {
       // Hidden unless there's been a new message since the user hid it —
       // same "comes back on new activity" rule as a cleared DM conversation.
-      const newerMessage = await GroupMessage.findOne({
-        where: { groupId: g.id, deletedAt: null, createdAt: { [Op.gt]: hiddenAt } },
-      });
-      if (!newerMessage) continue;
+      if (!latestMessage || new Date(latestMessage.createdAt) <= new Date(hiddenAt)) continue;
     }
     const members = await GroupMember.findAll({ where: { groupId: g.id } });
     const users = await User.findAll({ where: { id: members.map((m) => m.userId) } });
+    const lastReadAt = lastReadByGroup[g.id];
+    const unread = !!latestMessage && (!lastReadAt || new Date(latestMessage.createdAt) > new Date(lastReadAt));
     result.push({
       id: g.id, name: g.name, description: g.description, createdBy: g.createdBy,
       members: users.map((u) => ({ id: u.id, name: u.name, position: u.position })),
+      unread,
     });
   }
   res.json({ groups: result });
@@ -115,15 +123,59 @@ async function deleteGroup(req, res) {
   }
   await GroupMessage.destroy({ where: { groupId: group.id } });
   await GroupMember.destroy({ where: { groupId: group.id } });
+  await GroupRead.destroy({ where: { groupId: group.id } });
+  await GroupHide.destroy({ where: { groupId: group.id } });
   await group.destroy();
   res.json({ success: true });
 }
 
+// Paginated the same way as DM history (see messageController.getConversation):
+// newest page by default, `before` (a message id) to page further back.
 async function getGroupMessages(req, res) {
   const groupId = req.params.id;
   if (!(await isMember(groupId, req.user.id))) return res.status(403).json({ error: 'Not a member of this group' });
-  const messages = await GroupMessage.findAll({ where: { groupId, deletedAt: null }, order: [['createdAt', 'ASC']], limit: 500 });
-  res.json({ messages });
+
+  const where = { groupId, deletedAt: null };
+  const before = req.query.before ? Number(req.query.before) : null;
+  if (before) {
+    const anchor = await GroupMessage.findByPk(before);
+    if (anchor) where.id = { [Op.lt]: before };
+  }
+  const limit = Math.min(Number(req.query.limit) || PAGE_SIZE, 200);
+
+  const page = await GroupMessage.findAll({ where, order: [['id', 'DESC']], limit: limit + 1 });
+  const hasMore = page.length > limit;
+  const messages = page.slice(0, limit).reverse();
+
+  // Opening the group (the first, non-paginated page) marks it read.
+  if (!before) {
+    await markRead(req.user.id, Number(groupId));
+  }
+
+  res.json({ messages, hasMore });
+}
+
+// Shared by getGroupMessages and markGroupRead — findOrCreate+save rather than
+// .upsert(), matching the same safe pattern GroupHide/ConversationClear already
+// use (there's no unique index on (userId, groupId) for a real upsert to match
+// against, so .upsert() would just keep inserting new rows instead of updating).
+async function markRead(userId, groupId) {
+  const [row] = await GroupRead.findOrCreate({
+    where: { userId, groupId },
+    defaults: { lastReadAt: new Date() },
+  });
+  row.lastReadAt = new Date();
+  await row.save();
+}
+
+// Explicit "mark read" for when the client wants to clear the unread badge
+// without necessarily having just fetched the first page (e.g. it already
+// has the messages cached from a socket push).
+async function markGroupRead(req, res) {
+  const groupId = req.params.id;
+  if (!(await isMember(groupId, req.user.id))) return res.status(403).json({ error: 'Not a member of this group' });
+  await markRead(req.user.id, Number(groupId));
+  res.json({ success: true });
 }
 
 // Hide this group from MY Groups list only — does not touch membership,
@@ -167,7 +219,31 @@ async function deleteGroupMessages(req, res) {
   res.json({ success: true, deletedIds });
 }
 
+// Edit one of MY OWN, not-deleted group messages. Same sender-only rule as
+// deletion — no group-admin override exists to extend here either.
+async function editGroupMessage(req, res) {
+  const groupId = req.params.id;
+  if (!(await isMember(groupId, req.user.id))) return res.status(403).json({ error: 'Not a member of this group' });
+
+  const content = (req.body.content || '').trim();
+  if (!content) return res.status(400).json({ error: 'Message content cannot be empty' });
+
+  const message = await GroupMessage.findOne({ where: { id: req.params.messageId, groupId } });
+  if (!message || message.deletedAt) return res.status(404).json({ error: 'Message not found' });
+  if (message.senderId !== req.user.id) return res.status(403).json({ error: 'You can only edit your own messages' });
+  if (message.type !== 'text') return res.status(400).json({ error: 'Only text messages can be edited' });
+
+  message.content = content;
+  message.editedAt = new Date();
+  await message.save();
+
+  const members = await GroupMember.findAll({ where: { groupId }, attributes: ['userId'] });
+  if (members.length) req.app.get('io').to(members.map((m) => `user:${m.userId}`)).emit('group-message-edited', { groupId: Number(groupId), message });
+
+  res.json({ message });
+}
+
 module.exports = {
   createGroup, listMyGroups, getGroup, updateGroup, deleteGroup, getGroupMessages, isMember,
-  hideGroup, deleteGroupMessages,
+  hideGroup, deleteGroupMessages, markGroupRead, editGroupMessage,
 };

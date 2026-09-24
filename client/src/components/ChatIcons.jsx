@@ -40,6 +40,14 @@ export const VideoIcon = (props) => (
 export const CheckSquareIcon = (props) => (
   <Icon {...props}><polyline points="9 11 12 14 22 4" /><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" /></Icon>
 );
+export const EditIcon = (props) => (
+  <Icon {...props}><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" /><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" /></Icon>
+);
+// Single check = sent, used at 1x; the read-receipt row renders two of
+// these overlapped for "delivered"/"read" rather than a separate icon.
+export const CheckIcon = (props) => (
+  <Icon {...props}><polyline points="20 6 9 17 4 12" /></Icon>
+);
 
 // The attachment inside a chat bubble: a file chip instead of a bare 📎 link.
 export function FileAttachment({ fileUrl, fileName }) {

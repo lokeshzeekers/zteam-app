@@ -17,6 +17,9 @@ async function ensureColumn(table, column, definition) {
 
 async function runMigrations() {
   await ensureColumn('messages', 'deletedAt', { type: DataTypes.DATE, allowNull: true });
+  await ensureColumn('messages', 'deliveredAt', { type: DataTypes.DATE, allowNull: true });
+  await ensureColumn('messages', 'editedAt', { type: DataTypes.DATE, allowNull: true });
+  await ensureColumn('group_messages', 'editedAt', { type: DataTypes.DATE, allowNull: true });
 }
 
 module.exports = { runMigrations };

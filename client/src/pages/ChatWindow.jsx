@@ -1,9 +1,12 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import api from '../api';
 import { getSocket } from '../socket';
 import { useAuth } from '../context/AuthContext';
-import { AttachButton, FileAttachment, SendIcon, TrashIcon, PhoneIcon, VideoIcon, CheckSquareIcon, PhoneIncomingIcon, PhoneMissedIcon, PhoneXIcon } from '../components/ChatIcons';
+import {
+  AttachButton, FileAttachment, SendIcon, TrashIcon, PhoneIcon, VideoIcon, CheckSquareIcon,
+  PhoneIncomingIcon, PhoneMissedIcon, PhoneXIcon, EditIcon, CheckIcon,
+} from '../components/ChatIcons';
 import BackButton from '../components/BackButton';
 import { useNotificationCenter } from '../context/NotificationCenterContext';
 
@@ -27,6 +30,15 @@ function CallHistoryRow({ call, meId }) {
   );
 }
 
+// sent (1 grey check) -> delivered (2 grey checks) -> read (2 blue checks)
+function ReadReceipt({ message }) {
+  if (message.readAt) return <span className="receipt read" title="Read"><CheckIcon size={12} /><CheckIcon size={12} /></span>;
+  if (message.deliveredAt) return <span className="receipt" title="Delivered"><CheckIcon size={12} /><CheckIcon size={12} /></span>;
+  return <span className="receipt" title="Sent"><CheckIcon size={12} /></span>;
+}
+
+const TYPING_STOP_DELAY = 2500;
+
 export default function ChatWindow({ onStartCall }) {
   const { userId } = useParams();
   const { user } = useAuth();
@@ -34,28 +46,55 @@ export default function ChatWindow({ onStartCall }) {
   const { markDMRead } = useNotificationCenter();
   const [messages, setMessages] = useState([]);
   const [calls, setCalls] = useState([]);
+  const [hasMore, setHasMore] = useState(false);
+  const [loadingOlder, setLoadingOlder] = useState(false);
   const [text, setText] = useState('');
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [uploading, setUploading] = useState(false);
   const [selecting, setSelecting] = useState(false);
   const [selectedIds, setSelectedIds] = useState([]);
+  const [otherTyping, setOtherTyping] = useState(false);
+  const [editingId, setEditingId] = useState(null);
+  const [editText, setEditText] = useState('');
   const bottomRef = useRef(null);
   const fileInputRef = useRef(null);
+  const typingTimeoutRef = useRef(null);
+  const lastTypingEmitRef = useRef(0);
+  const otherTypingTimeoutRef = useRef(null);
 
   function loadCalls() {
     api.get(`/api/calls/with/${userId}`).then((r) => setCalls(r.data.calls)).catch(() => {});
+  }
+
+  const loadFirstPage = useCallback(() => {
+    return api.get(`/api/messages/with/${userId}`)
+      .then((r) => { setMessages(r.data.messages); setHasMore(r.data.hasMore); })
+      .catch((err) => setError(err?.response?.data?.error || 'Cannot load conversation'));
+  }, [userId]);
+
+  async function loadOlder() {
+    if (!hasMore || loadingOlder || messages.length === 0) return;
+    setLoadingOlder(true);
+    try {
+      const oldestId = messages[0].id;
+      const { data } = await api.get(`/api/messages/with/${userId}`, { params: { before: oldestId } });
+      setMessages((prev) => [...data.messages, ...prev]);
+      setHasMore(data.hasMore);
+    } catch (err) {
+      // non-fatal; leave "Load older" visible so they can retry
+    } finally {
+      setLoadingOlder(false);
+    }
   }
 
   useEffect(() => {
     setError('');
     setSelecting(false);
     setSelectedIds([]);
+    setEditingId(null);
     markDMRead(Number(userId));
-    const load = () => api.get(`/api/messages/with/${userId}`)
-      .then((r) => setMessages(r.data.messages))
-      .catch((err) => setError(err?.response?.data?.error || 'Cannot load conversation'));
-    load();
+    loadFirstPage();
     loadCalls();
 
     const socket = getSocket();
@@ -63,7 +102,7 @@ export default function ChatWindow({ onStartCall }) {
     const handler = ({ message }) => {
       if (message.senderId === Number(userId) || message.receiverId === Number(userId)) {
         setMessages((prev) => (prev.some((m) => m.id === message.id) ? prev : [...prev, message]));
-        if (message.senderId === Number(userId)) markDMRead(Number(userId));
+        if (message.senderId === Number(userId)) { markDMRead(Number(userId)); setOtherTyping(false); }
       }
     };
     const onDeleted = ({ messageIds, otherUserId: fromId }) => {
@@ -71,29 +110,60 @@ export default function ChatWindow({ onStartCall }) {
       setMessages((prev) => prev.filter((m) => !messageIds.includes(m.id)));
       setSelectedIds((prev) => prev.filter((id) => !messageIds.includes(id)));
     };
+    const onEdited = ({ message }) => {
+      const otherId = message.senderId === user.id ? message.receiverId : message.senderId;
+      if (otherId !== Number(userId)) return;
+      setMessages((prev) => prev.map((m) => (m.id === message.id ? message : m)));
+    };
+    const onRead = ({ messageIds }) => {
+      const now = new Date().toISOString();
+      setMessages((prev) => prev.map((m) => (messageIds.includes(m.id) ? { ...m, readAt: m.readAt || now, deliveredAt: m.deliveredAt || now } : m)));
+    };
     const onCallLog = () => loadCalls();
     const onRemoved = ({ userId: removedId }) => {
       if (Number(removedId) === Number(userId)) setError('This person is no longer part of Zteam.');
     };
+    const onTyping = ({ userId: fromId }) => {
+      if (fromId !== Number(userId)) return;
+      setOtherTyping(true);
+      clearTimeout(otherTypingTimeoutRef.current);
+      otherTypingTimeoutRef.current = setTimeout(() => setOtherTyping(false), 4000);
+    };
+    const onStopTyping = ({ userId: fromId }) => {
+      if (fromId !== Number(userId)) return;
+      setOtherTyping(false);
+      clearTimeout(otherTypingTimeoutRef.current);
+    };
     socket.on('new-message', handler);
     socket.on('message-sent', handler);
     socket.on('messages-deleted', onDeleted);
+    socket.on('message-edited', onEdited);
+    socket.on('messages-read', onRead);
     socket.on('call-log-updated', onCallLog);
     socket.on('user-removed', onRemoved);
-    socket.on('connect', load);
+    socket.on('typing', onTyping);
+    socket.on('stop-typing', onStopTyping);
+    socket.on('connect', loadFirstPage);
     return () => {
       socket.off('new-message', handler);
       socket.off('message-sent', handler);
       socket.off('messages-deleted', onDeleted);
+      socket.off('message-edited', onEdited);
+      socket.off('messages-read', onRead);
       socket.off('call-log-updated', onCallLog);
       socket.off('user-removed', onRemoved);
-      socket.off('connect', load);
+      socket.off('typing', onTyping);
+      socket.off('stop-typing', onStopTyping);
+      socket.off('connect', loadFirstPage);
+      clearTimeout(typingTimeoutRef.current);
+      clearTimeout(otherTypingTimeoutRef.current);
+      socket.emit('stop-typing', { receiverId: Number(userId) });
     };
-  }, [userId]);
+  }, [userId, loadFirstPage, markDMRead, user.id]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, calls]);
+  }, [messages.length, calls.length]);
 
   // Merge messages + call log entries into one time-ordered timeline.
   const timeline = useMemo(() => {
@@ -105,6 +175,23 @@ export default function ChatWindow({ onStartCall }) {
     return items;
   }, [messages, calls]);
 
+  function onTextChange(e) {
+    setText(e.target.value);
+    const socket = getSocket();
+    if (!socket) return;
+    const now = Date.now();
+    // Throttle the 'typing' emit itself (no point re-announcing on every
+    // keystroke); the auto-stop timeout is what actually debounces the signal.
+    if (now - lastTypingEmitRef.current > 1500) {
+      socket.emit('typing', { receiverId: Number(userId) });
+      lastTypingEmitRef.current = now;
+    }
+    clearTimeout(typingTimeoutRef.current);
+    typingTimeoutRef.current = setTimeout(() => {
+      socket.emit('stop-typing', { receiverId: Number(userId) });
+    }, TYPING_STOP_DELAY);
+  }
+
   function send(e) {
     e?.preventDefault();
     if (!text.trim()) return;
@@ -113,6 +200,8 @@ export default function ChatWindow({ onStartCall }) {
       if (res?.error) setError(res.error);
     });
     setText('');
+    clearTimeout(typingTimeoutRef.current);
+    socket.emit('stop-typing', { receiverId: Number(userId) });
   }
 
   async function onFilePick(e) {
@@ -138,6 +227,7 @@ export default function ChatWindow({ onStartCall }) {
   function toggleSelecting() {
     setSelecting((s) => !s);
     setSelectedIds([]);
+    setEditingId(null);
   }
   function toggleSelected(id) {
     setSelectedIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
@@ -163,6 +253,26 @@ export default function ChatWindow({ onStartCall }) {
       navigate('/');
     } catch (err) {
       alert(err?.response?.data?.error || 'Could not delete the conversation');
+    }
+  }
+
+  function startEdit(m) {
+    setEditingId(m.id);
+    setEditText(m.content || '');
+  }
+  function cancelEdit() {
+    setEditingId(null);
+    setEditText('');
+  }
+  async function saveEdit(id) {
+    const content = editText.trim();
+    if (!content) return;
+    try {
+      const { data } = await api.put(`/api/messages/${id}`, { content });
+      setMessages((prev) => prev.map((m) => (m.id === id ? data.message : m)));
+      cancelEdit();
+    } catch (err) {
+      alert(err?.response?.data?.error || 'Could not save the edit');
     }
   }
 
@@ -221,6 +331,11 @@ export default function ChatWindow({ onStartCall }) {
       )}
 
       <div className="chat-body">
+        {hasMore && (
+          <button type="button" className="load-older-btn" onClick={loadOlder} disabled={loadingOlder}>
+            {loadingOlder ? 'Loading…' : 'Load older messages'}
+          </button>
+        )}
         {timeline.map((item) => item.kind === 'call' ? (
           <CallHistoryRow key={`call-${item.data.id}`} call={item.data} meId={user.id} />
         ) : (
@@ -234,22 +349,48 @@ export default function ChatWindow({ onStartCall }) {
               />
             )}
             <div className="msg-content">
-              {item.data.type === 'file' ? (
-                <FileAttachment fileUrl={item.data.fileUrl} fileName={item.data.fileName} />
+              {editingId === item.data.id ? (
+                <div className="msg-edit-form">
+                  <textarea value={editText} onChange={(e) => setEditText(e.target.value)} rows={2} autoFocus />
+                  <div className="msg-edit-actions">
+                    <button type="button" className="btn-secondary btn-sm" onClick={cancelEdit}>Cancel</button>
+                    <button type="button" className="btn-primary btn-sm" onClick={() => saveEdit(item.data.id)}>Save</button>
+                  </div>
+                </div>
               ) : (
-                item.data.content
+                <>
+                  {item.data.type === 'file' ? (
+                    <FileAttachment fileUrl={item.data.fileUrl} fileName={item.data.fileName} />
+                  ) : (
+                    <span className="msg-text">{item.data.content}</span>
+                  )}
+                  {!selecting && item.data.senderId === user.id && item.data.type === 'text' && (
+                    <button type="button" className="msg-edit-btn" onClick={() => startEdit(item.data)} title="Edit message" aria-label="Edit message">
+                      <EditIcon size={13} />
+                    </button>
+                  )}
+                  <div className="msg-time">
+                    {item.data.editedAt && <span className="edited-tag">edited</span>}
+                    {new Date(item.data.createdAt).toLocaleTimeString()}
+                    {item.data.senderId === user.id && <ReadReceipt message={item.data} />}
+                  </div>
+                </>
               )}
-              <div className="msg-time">{new Date(item.data.createdAt).toLocaleTimeString()}</div>
             </div>
           </div>
         ))}
+        {otherTyping && (
+          <div className="typing-indicator" aria-live="polite">
+            <span className="typing-dot" /><span className="typing-dot" /><span className="typing-dot" />
+          </div>
+        )}
         <div ref={bottomRef} />
       </div>
       {notice && <div className="chat-notice" role="alert">{notice}</div>}
       <form className="chat-input" onSubmit={send}>
         <AttachButton onClick={() => fileInputRef.current.click()} uploading={uploading} />
         <input type="file" ref={fileInputRef} style={{ display: 'none' }} onChange={onFilePick} />
-        <input value={text} onChange={(e) => setText(e.target.value)} placeholder="Type a message..." />
+        <input value={text} onChange={onTextChange} placeholder="Type a message..." />
         <button type="submit" className="send-btn"><SendIcon size={16} /> Send</button>
       </form>
     </div>

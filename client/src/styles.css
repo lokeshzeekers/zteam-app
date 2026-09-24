@@ -493,3 +493,52 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   background: var(--navy); color: #fff; padding: 11px 20px; border-radius: 999px; font-size: 14px;
   box-shadow: var(--shadow-md); max-width: 90vw; text-align: center;
 }
+
+/* ---------- Pagination ---------- */
+.load-older-btn {
+  align-self: center; background: #fff; border: 1px solid var(--border-strong); color: var(--muted);
+  padding: 6px 16px; border-radius: 999px; font-size: 12px; margin-bottom: 8px;
+}
+.load-older-btn:hover:not(:disabled) { background: #eef4ff; border-color: var(--accent); color: var(--accent); }
+.load-older-btn:disabled { opacity: 0.6; }
+
+/* ---------- Message edit ---------- */
+.msg-content { min-width: 0; position: relative; }
+.msg-text { white-space: pre-wrap; word-break: break-word; }
+.msg-edit-btn {
+  position: absolute; top: -10px; right: -10px; width: 22px; height: 22px; border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: #fff; border: 1px solid var(--border-strong); color: var(--muted);
+  opacity: 0; transition: opacity 0.12s;
+}
+.msg:hover .msg-edit-btn { opacity: 1; }
+.msg.me .msg-edit-btn { background: rgba(255,255,255,0.9); color: var(--accent-dark); }
+.msg-edit-btn:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
+.msg-edit-form textarea {
+  width: 100%; min-width: 220px; border-radius: 8px; border: 1px solid var(--border-strong);
+  padding: 6px 8px; font: inherit; resize: vertical; color: var(--text);
+}
+.msg-edit-actions { display: flex; justify-content: flex-end; gap: 6px; margin-top: 6px; }
+.edited-tag { font-style: italic; opacity: 0.75; margin-right: 4px; }
+
+/* ---------- Read receipts ---------- */
+.receipt { display: inline-flex; margin-left: 4px; vertical-align: middle; opacity: 0.85; }
+.receipt svg + svg { margin-left: -6px; }
+.receipt.read { color: #7cd0ff; }
+
+/* ---------- Typing indicator ---------- */
+.typing-indicator { align-self: flex-start; display: flex; align-items: center; gap: 6px; padding: 6px 12px; }
+.typing-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); opacity: 0.6; animation: typing-bounce 1.2s infinite ease-in-out; }
+.typing-dot:nth-child(2) { animation-delay: 0.15s; }
+.typing-dot:nth-child(3) { animation-delay: 0.3s; }
+@keyframes typing-bounce { 0%, 60%, 100% { transform: translateY(0); opacity: 0.4; } 30% { transform: translateY(-4px); opacity: 1; } }
+
+/* ---------- Search ---------- */
+.search-form { display: flex; gap: 8px; margin-bottom: 16px; }
+.search-form input { flex: 1; padding: 10px 14px; border-radius: 9px; border: 1px solid var(--border-strong); font-size: 14px; }
+.search-results-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 18px; }
+.search-result-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 10px 12px; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; cursor: pointer;
+}
+.search-result-row:hover { border-color: var(--accent); }

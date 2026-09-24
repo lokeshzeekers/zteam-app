@@ -19,6 +19,7 @@ const fileRoutes = require('./routes/files');
 const groupRoutes = require('./routes/groups');
 const meetingRoutes = require('./routes/meetings');
 const callRoutes = require('./routes/calls');
+const searchRoutes = require('./routes/search');
 
 const app = express();
 const server = http.createServer(app);
@@ -43,6 +44,7 @@ app.use('/api/files', fileRoutes);
 app.use('/api/groups', groupRoutes);
 app.use('/api/meetings', meetingRoutes);
 app.use('/api/calls', callRoutes);
+app.use('/api/search', searchRoutes);
 
 initSockets(io);
 

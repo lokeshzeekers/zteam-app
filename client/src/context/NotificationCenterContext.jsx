@@ -10,11 +10,10 @@ const NotificationCenterContext = createContext(null);
 //  - Groups: groups with a new message since you last opened them
 //  - Meetings: meetings that are live right now, or invites/starts you
 //    haven't seen yet
-// Seeded from the server on login so a refresh doesn't lose real unread
-// state (for DMs, which the server tracks via readAt), then kept live via
-// socket events. Group "unread" has no server-side read-receipt yet, so it
-// only tracks activity that happens during the current session — opening a
-// group clears it either way.
+// Seeded from the server on login so a refresh/relogin never loses real
+// unread state — DMs via readAt, groups via the GroupRead table (the
+// server computes and returns `unread` per group) — then kept live via
+// socket events for anything that happens during the session.
 export function NotificationCenterProvider({ children }) {
   const { user } = useAuth();
   const [unreadDMs, setUnreadDMs] = useState(new Set());
@@ -29,6 +28,10 @@ export function NotificationCenterProvider({ children }) {
         .map((t) => t.user.id);
       setUnreadDMs(new Set(unread));
     } catch (e) { /* not fatal, badges just start empty */ }
+    try {
+      const { data } = await api.get('/api/groups');
+      setUnreadGroups(new Set(data.groups.filter((g) => g.unread).map((g) => g.id)));
+    } catch (e) { /* ignore */ }
     try {
       const { data } = await api.get('/api/meetings');
       const ongoing = data.meetings.filter((m) => m.status === 'ongoing').map((m) => m.id);

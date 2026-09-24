@@ -86,6 +86,7 @@ export default function Sidebar() {
 
       <div className="nav-section main-nav">
         <NavLink to="/" end>Inbox {unreadDMCount > 0 && <span className="badge">{unreadDMCount}</span>}</NavLink>
+        <NavLink to="/search">Search</NavLink>
         <NavLink to="/directory">Departments</NavLink>
         <NavLink to="/groups">Groups {unreadGroupCount > 0 && <span className="badge">{unreadGroupCount}</span>}</NavLink>
         <NavLink to="/meetings">Meetings {meetingAlertCount > 0 && <span className="badge">{meetingAlertCount}</span>}</NavLink>

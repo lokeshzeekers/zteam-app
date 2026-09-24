@@ -13,6 +13,7 @@ GroupMessage.init({
   content: { type: DataTypes.TEXT, allowNull: true },
   fileUrl: { type: DataTypes.STRING, allowNull: true },
   fileName: { type: DataTypes.STRING, allowNull: true },
+  editedAt: { type: DataTypes.DATE, allowNull: true },
   deletedAt: { type: DataTypes.DATE, allowNull: true },
 }, { sequelize, modelName: 'groupmessage', tableName: 'group_messages' });
 

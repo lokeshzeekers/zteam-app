@@ -10,6 +10,8 @@ router.put('/:id', ctrl.updateGroup);
 router.delete('/:id', ctrl.deleteGroup);
 router.get('/:id/messages', ctrl.getGroupMessages);
 router.post('/:id/messages/delete', ctrl.deleteGroupMessages);
+router.put('/:id/messages/:messageId', ctrl.editGroupMessage);
 router.post('/:id/hide', ctrl.hideGroup);
+router.post('/:id/read', ctrl.markGroupRead);
 
 module.exports = router;

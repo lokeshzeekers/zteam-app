@@ -56,6 +56,22 @@ async function notifyMeetingStarting(io, meeting, starter) {
   });
 }
 
+// Lightweight in-memory flood guard for message sending over the socket
+// (express-rate-limit only covers REST, not Socket.IO events). Generous on
+// purpose for ~20 real users — this exists to stop a stuck retry loop or
+// flooding, not to slow down normal typing/sending.
+const MESSAGE_RATE_WINDOW_MS = 10 * 1000;
+const MESSAGE_RATE_MAX = 25; // 25 messages / 10s per user
+const messageTimestamps = new Map(); // userId -> number[] (recent send times)
+
+function isRateLimited(userId) {
+  const now = Date.now();
+  const times = (messageTimestamps.get(userId) || []).filter((t) => now - t < MESSAGE_RATE_WINDOW_MS);
+  times.push(now);
+  messageTimestamps.set(userId, times);
+  return times.length > MESSAGE_RATE_MAX;
+}
+
 function initSockets(io) {
   io.use(async (socket, next) => {
     try {
@@ -119,6 +135,7 @@ function initSockets(io) {
     // ---- Messaging ----
     socket.on('send-message', async (payload, ack) => {
       try {
+        if (isRateLimited(user.id)) return ack?.({ error: 'You are sending messages too fast. Please slow down a moment.' });
         const { receiverId, content, type = 'text', fileUrl, fileName } = payload;
         const receiver = await User.findByPk(receiverId);
         if (!receiver) return ack?.({ error: 'Recipient not found' });
@@ -128,6 +145,9 @@ function initSockets(io) {
 
         const message = await Message.create({
           senderId: user.id, receiverId, type, content: content || null, fileUrl: fileUrl || null, fileName: fileName || null,
+          // "Delivered" the instant it's sent if the recipient is already online — a
+          // reasonable, simple approximation rather than a full delivery-ack round trip.
+          deliveredAt: isOnline(receiverId) ? new Date() : null,
         });
 
         io.to(`user:${receiverId}`).emit('new-message', { message });
@@ -138,8 +158,11 @@ function initSockets(io) {
       }
     });
 
-    socket.on('typing', ({ receiverId }) => {
-      io.to(`user:${receiverId}`).emit('typing', { userId: user.id });
+    socket.on('typing', ({ receiverId } = {}) => {
+      io.to(`user:${Number(receiverId)}`).emit('typing', { userId: user.id });
+    });
+    socket.on('stop-typing', ({ receiverId } = {}) => {
+      io.to(`user:${Number(receiverId)}`).emit('stop-typing', { userId: user.id });
     });
 
     // ---- Calls (WebRTC signaling relay) ----
@@ -260,6 +283,7 @@ function initSockets(io) {
     // ---- Group text chat ----
     socket.on('send-group-message', async (payload, ack) => {
       try {
+        if (isRateLimited(user.id)) return ack?.({ error: 'You are sending messages too fast. Please slow down a moment.' });
         const { groupId, content, type = 'text', fileUrl, fileName } = payload;
         if (!(await isGroupMember(groupId, user.id))) return ack?.({ error: 'Not a member of this group' });
 
@@ -288,6 +312,21 @@ function initSockets(io) {
     });
     socket.on('leave-group-room', ({ groupId }) => {
       socket.leave(`group:${groupId}`);
+    });
+
+    // Not persisted anywhere — purely a live, ephemeral relay to the other
+    // current members. Membership is checked so a non-member can't probe who's in a group.
+    socket.on('group-typing', async ({ groupId } = {}) => {
+      if (!(await isGroupMember(groupId, user.id))) return;
+      const members = await GroupMember.findAll({ where: { groupId }, attributes: ['userId'] });
+      const rooms = members.filter((m) => m.userId !== user.id).map((m) => `user:${m.userId}`);
+      if (rooms.length) io.to(rooms).emit('group-typing', { groupId: Number(groupId), userId: user.id, name: user.name });
+    });
+    socket.on('group-stop-typing', async ({ groupId } = {}) => {
+      if (!(await isGroupMember(groupId, user.id))) return;
+      const members = await GroupMember.findAll({ where: { groupId }, attributes: ['userId'] });
+      const rooms = members.filter((m) => m.userId !== user.id).map((m) => `user:${m.userId}`);
+      if (rooms.length) io.to(rooms).emit('group-stop-typing', { groupId: Number(groupId), userId: user.id });
     });
 
     // ---- Group meetings (mesh WebRTC: every participant connects to every other) ----

@@ -3,6 +3,12 @@ const { Message, User, ConversationClear } = require('../models');
 const { canCommunicate } = require('../utils/permissions');
 const { isPresent } = require('../utils/presence');
 
+const PAGE_SIZE = 50;
+
+// Paginated: most recent page by default, or the page just older than
+// `before` (a message id) when the client asks to load more history.
+// Returns ascending order (oldest-first, ready to append to the top of the
+// list) plus hasMore so the client knows whether to show "load older".
 async function getConversation(req, res) {
   const me = req.user;
   const otherId = Number(req.params.userId);
@@ -26,15 +32,36 @@ async function getConversation(req, res) {
   };
   if (clear) where.createdAt = { [Op.gt]: clear.clearedAt };
 
-  const messages = await Message.findAll({ where, order: [['createdAt', 'ASC']], limit: 500 });
+  const before = req.query.before ? Number(req.query.before) : null;
+  if (before) {
+    const anchor = await Message.findByPk(before);
+    if (anchor) where.id = { ...(where.id || {}), [Op.lt]: before };
+  }
+  const limit = Math.min(Number(req.query.limit) || PAGE_SIZE, 200);
 
-  // mark incoming as read
-  await Message.update(
-    { readAt: new Date() },
-    { where: { senderId: otherId, receiverId: me.id, readAt: null } }
-  );
+  const page = await Message.findAll({ where, order: [['id', 'DESC']], limit: limit + 1 });
+  const hasMore = page.length > limit;
+  const messages = page.slice(0, limit).reverse(); // oldest-first for rendering
 
-  res.json({ messages });
+  // Only the newest page (no "before" cursor) represents "I just opened this
+  // chat" — mark incoming messages read/delivered from there, not while
+  // scrolling up through old history.
+  if (!before) {
+    const now = new Date();
+    await Message.update(
+      { readAt: now, deliveredAt: now },
+      { where: { senderId: otherId, receiverId: me.id, readAt: null } }
+    );
+    const justRead = await Message.findAll({
+      where: { senderId: otherId, receiverId: me.id, readAt: now },
+      attributes: ['id'],
+    });
+    if (justRead.length) {
+      req.app.get('io')?.to(`user:${otherId}`).emit('messages-read', { messageIds: justRead.map((m) => m.id), by: me.id });
+    }
+  }
+
+  res.json({ messages, hasMore });
 }
 
 // list recent conversations (inbox) - most recent message per counterpart
@@ -43,7 +70,7 @@ async function listInbox(req, res) {
   const messages = await Message.findAll({
     where: { deletedAt: null, [Op.or]: [{ senderId: me.id }, { receiverId: me.id }] },
     order: [['createdAt', 'DESC']],
-    limit: 500,
+    limit: 1000,
   });
 
   const clears = await ConversationClear.findAll({ where: { userId: me.id } });
@@ -126,4 +153,29 @@ async function deleteMessages(req, res) {
   res.json({ success: true, deletedIds });
 }
 
-module.exports = { getConversation, listInbox, clearConversation, deleteMessages };
+// Edit one of MY OWN, not-deleted DM messages. File messages aren't
+// editable (nothing text-based to edit); only plain text content.
+async function editMessage(req, res) {
+  const me = req.user;
+  const id = Number(req.params.id);
+  const content = (req.body.content || '').trim();
+  if (!content) return res.status(400).json({ error: 'Message content cannot be empty' });
+
+  const message = await Message.findByPk(id);
+  if (!message || message.deletedAt) return res.status(404).json({ error: 'Message not found' });
+  if (message.senderId !== me.id) return res.status(403).json({ error: 'You can only edit your own messages' });
+  if (message.type !== 'text') return res.status(400).json({ error: 'Only text messages can be edited' });
+
+  message.content = content;
+  message.editedAt = new Date();
+  await message.save();
+
+  const otherId = message.senderId === me.id ? message.receiverId : message.senderId;
+  const io = req.app.get('io');
+  io.to(`user:${me.id}`).emit('message-edited', { message });
+  io.to(`user:${otherId}`).emit('message-edited', { message });
+
+  res.json({ message });
+}
+
+module.exports = { getConversation, listInbox, clearConversation, deleteMessages, editMessage };

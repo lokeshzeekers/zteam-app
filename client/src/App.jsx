@@ -11,6 +11,7 @@ import GroupChat from './pages/GroupChat';
 import Meetings from './pages/Meetings';
 import MeetingRoom from './pages/MeetingRoom';
 import Directory from './pages/Directory';
+import Search from './pages/Search';
 import Layout, { ChatRoute } from './components/Layout';
 
 function Protected({ children, adminOnly }) {
@@ -34,6 +35,7 @@ export default function App() {
         <Route path="requests" element={<Requests />} />
         <Route path="department/:id" element={<DepartmentMembers />} />
         <Route path="directory" element={<Directory />} />
+        <Route path="search" element={<Search />} />
         <Route path="chat/:userId" element={<ChatRoute />} />
         <Route path="groups" element={<Groups />} />
         <Route path="groups/:groupId" element={<GroupChat />} />

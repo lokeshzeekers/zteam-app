@@ -1,10 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import api from '../api';
 import { getSocket } from '../socket';
 import { useAuth } from '../context/AuthContext';
 import { usePresence } from '../context/PresenceContext';
-import { AttachButton, FileAttachment, SendIcon, TrashIcon, CheckSquareIcon, PhoneIncomingIcon, PhoneMissedIcon, PhoneXIcon } from '../components/ChatIcons';
+import { AttachButton, FileAttachment, SendIcon, TrashIcon, CheckSquareIcon, PhoneIncomingIcon, PhoneMissedIcon, PhoneXIcon, EditIcon } from '../components/ChatIcons';
 import BackButton from '../components/BackButton';
 import { useNotificationCenter } from '../context/NotificationCenterContext';
 
@@ -51,8 +51,16 @@ export default function GroupChat() {
   const [savingEdit, setSavingEdit] = useState(false);
   const [selecting, setSelecting] = useState(false);
   const [selectedIds, setSelectedIds] = useState([]);
+  const [hasMore, setHasMore] = useState(false);
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  const [typingUsers, setTypingUsers] = useState({}); // userId -> name
+  const [editingId, setEditingId] = useState(null);
+  const [editText, setEditText] = useState('');
   const bottomRef = useRef(null);
   const fileInputRef = useRef(null);
+  const typingTimeoutRef = useRef(null);
+  const lastTypingEmitRef = useRef(0);
+  const typingClearTimersRef = useRef({});
 
   function loadGroup() {
     return api.get(`/api/groups/${groupId}`).then((r) => setGroup(r.data.group));
@@ -60,15 +68,35 @@ export default function GroupChat() {
   function loadCalls() {
     api.get(`/api/calls/group/${groupId}`).then((r) => setCalls(r.data.calls)).catch(() => {});
   }
+  const loadFirstPage = useCallback(() => {
+    return api.get(`/api/groups/${groupId}/messages`)
+      .then((r) => { setMessages(r.data.messages); setHasMore(r.data.hasMore); })
+      .catch(() => {});
+  }, [groupId]);
+
+  async function loadOlder() {
+    if (!hasMore || loadingOlder || messages.length === 0) return;
+    setLoadingOlder(true);
+    try {
+      const oldestId = messages[0].id;
+      const { data } = await api.get(`/api/groups/${groupId}/messages`, { params: { before: oldestId } });
+      setMessages((prev) => [...data.messages, ...prev]);
+      setHasMore(data.hasMore);
+    } catch (err) {
+      // non-fatal; leave "Load older" visible so they can retry
+    } finally {
+      setLoadingOlder(false);
+    }
+  }
 
   useEffect(() => {
     setError('');
     setSelecting(false);
     setSelectedIds([]);
+    setEditingId(null);
     markGroupRead(Number(groupId));
-    const loadMessages = () => api.get(`/api/groups/${groupId}/messages`).then((r) => setMessages(r.data.messages)).catch(() => {});
+    loadFirstPage();
     loadGroup().catch(() => setError('Group not found or you are not a member'));
-    loadMessages();
     loadCalls();
 
     const socket = getSocket();
@@ -78,6 +106,7 @@ export default function GroupChat() {
       if (String(message.groupId) === String(groupId)) {
         setMessages((prev) => (prev.some((m) => m.id === message.id) ? prev : [...prev, message]));
         markGroupRead(Number(groupId)); // we're looking right at this group
+        setTypingUsers((prev) => { const next = { ...prev }; delete next[message.senderId]; return next; });
       }
     };
     const onDeleted = ({ groupId: gid, messageIds }) => {
@@ -85,35 +114,61 @@ export default function GroupChat() {
       setMessages((prev) => prev.filter((m) => !messageIds.includes(m.id)));
       setSelectedIds((prev) => prev.filter((id) => !messageIds.includes(id)));
     };
+    const onEdited = ({ groupId: gid, message }) => {
+      if (String(gid) !== String(groupId)) return;
+      setMessages((prev) => prev.map((m) => (m.id === message.id ? message : m)));
+    };
     // After a reconnect the server has forgotten our room: rejoin it and catch up.
     const onReconnect = () => {
       socket.emit('join-group-room', { groupId: Number(groupId) });
-      loadMessages();
+      loadFirstPage();
       loadGroup().catch(() => {});
       loadCalls();
     };
     const onRemoved = () => { loadGroup().catch(() => {}); };
     const onMeetingChange = () => loadCalls();
+    const onGroupTyping = ({ groupId: gid, userId: fromId, name }) => {
+      if (String(gid) !== String(groupId) || fromId === user.id) return;
+      setTypingUsers((prev) => ({ ...prev, [fromId]: name }));
+      clearTimeout(typingClearTimersRef.current[fromId]);
+      typingClearTimersRef.current[fromId] = setTimeout(() => {
+        setTypingUsers((prev) => { const next = { ...prev }; delete next[fromId]; return next; });
+      }, 4000);
+    };
+    const onGroupStopTyping = ({ groupId: gid, userId: fromId }) => {
+      if (String(gid) !== String(groupId)) return;
+      setTypingUsers((prev) => { const next = { ...prev }; delete next[fromId]; return next; });
+      clearTimeout(typingClearTimersRef.current[fromId]);
+    };
     socket.on('new-group-message', handler);
     socket.on('group-messages-deleted', onDeleted);
+    socket.on('group-message-edited', onEdited);
     socket.on('connect', onReconnect);
     socket.on('user-removed', onRemoved);
     socket.on('meeting-updated', onMeetingChange);
     socket.on('meeting-cancelled', onMeetingChange);
     socket.on('meeting-starting', onMeetingChange);
     socket.on('meeting-ended', onMeetingChange);
+    socket.on('group-typing', onGroupTyping);
+    socket.on('group-stop-typing', onGroupStopTyping);
     return () => {
       socket.off('new-group-message', handler);
       socket.off('group-messages-deleted', onDeleted);
+      socket.off('group-message-edited', onEdited);
       socket.off('connect', onReconnect);
       socket.off('user-removed', onRemoved);
       socket.off('meeting-updated', onMeetingChange);
       socket.off('meeting-cancelled', onMeetingChange);
       socket.off('meeting-starting', onMeetingChange);
       socket.off('meeting-ended', onMeetingChange);
+      socket.off('group-typing', onGroupTyping);
+      socket.off('group-stop-typing', onGroupStopTyping);
+      socket.emit('group-stop-typing', { groupId: Number(groupId) });
       socket.emit('leave-group-room', { groupId: Number(groupId) });
+      clearTimeout(typingTimeoutRef.current);
+      Object.values(typingClearTimersRef.current).forEach(clearTimeout);
     };
-  }, [groupId]);
+  }, [groupId, loadFirstPage, markGroupRead, user.id]);
 
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages, calls]);
 
@@ -129,6 +184,21 @@ export default function GroupChat() {
     return items;
   }, [messages, calls]);
 
+  function onTextChange(e) {
+    setText(e.target.value);
+    const socket = getSocket();
+    if (!socket) return;
+    const now = Date.now();
+    if (now - lastTypingEmitRef.current > 1500) {
+      socket.emit('group-typing', { groupId: Number(groupId) });
+      lastTypingEmitRef.current = now;
+    }
+    clearTimeout(typingTimeoutRef.current);
+    typingTimeoutRef.current = setTimeout(() => {
+      socket.emit('group-stop-typing', { groupId: Number(groupId) });
+    }, 2500);
+  }
+
   function send(e) {
     e?.preventDefault();
     if (!text.trim()) return;
@@ -136,6 +206,8 @@ export default function GroupChat() {
       if (res?.error) setError(res.error);
     });
     setText('');
+    clearTimeout(typingTimeoutRef.current);
+    getSocket().emit('group-stop-typing', { groupId: Number(groupId) });
   }
 
   async function onFilePick(e) {
@@ -221,9 +293,30 @@ export default function GroupChat() {
   function toggleSelecting() {
     setSelecting((s) => !s);
     setSelectedIds([]);
+    setEditingId(null);
   }
   function toggleSelected(id) {
     setSelectedIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  }
+
+  function startEdit(m) {
+    setEditingId(m.id);
+    setEditText(m.content || '');
+  }
+  function cancelEdit() {
+    setEditingId(null);
+    setEditText('');
+  }
+  async function saveEdit(id) {
+    const content = editText.trim();
+    if (!content) return;
+    try {
+      const { data } = await api.put(`/api/groups/${groupId}/messages/${id}`, { content });
+      setMessages((prev) => prev.map((m) => (m.id === id ? data.message : m)));
+      cancelEdit();
+    } catch (err) {
+      alert(err?.response?.data?.error || 'Could not save the edit');
+    }
   }
 
   async function deleteSelected() {
@@ -304,6 +397,11 @@ export default function GroupChat() {
 
       <div className="chat-body">
         {error && <div className="auth-error">{error}</div>}
+        {hasMore && (
+          <button type="button" className="load-older-btn" onClick={loadOlder} disabled={loadingOlder}>
+            {loadingOlder ? 'Loading…' : 'Load older messages'}
+          </button>
+        )}
         {timeline.length === 0 && (
           <div className="empty-state small">
             <p><strong>No messages yet</strong></p>
@@ -326,22 +424,48 @@ export default function GroupChat() {
               {item.data.senderId !== user.id && (
                 <div className="msg-sender">{group?.members.find((mem) => mem.id === item.data.senderId)?.name || 'Member'}</div>
               )}
-              {item.data.type === 'file' ? (
-                <FileAttachment fileUrl={item.data.fileUrl} fileName={item.data.fileName} />
+              {editingId === item.data.id ? (
+                <div className="msg-edit-form">
+                  <textarea value={editText} onChange={(e) => setEditText(e.target.value)} rows={2} autoFocus />
+                  <div className="msg-edit-actions">
+                    <button type="button" className="btn-secondary btn-sm" onClick={cancelEdit}>Cancel</button>
+                    <button type="button" className="btn-primary btn-sm" onClick={() => saveEdit(item.data.id)}>Save</button>
+                  </div>
+                </div>
               ) : (
-                item.data.content
+                <>
+                  {item.data.type === 'file' ? (
+                    <FileAttachment fileUrl={item.data.fileUrl} fileName={item.data.fileName} />
+                  ) : (
+                    <span className="msg-text">{item.data.content}</span>
+                  )}
+                  {!selecting && item.data.senderId === user.id && item.data.type === 'text' && (
+                    <button type="button" className="msg-edit-btn" onClick={() => startEdit(item.data)} title="Edit message" aria-label="Edit message">
+                      <EditIcon size={13} />
+                    </button>
+                  )}
+                  <div className="msg-time">
+                    {item.data.editedAt && <span className="edited-tag">edited</span>}
+                    {new Date(item.data.createdAt).toLocaleTimeString()}
+                  </div>
+                </>
               )}
-              <div className="msg-time">{new Date(item.data.createdAt).toLocaleTimeString()}</div>
             </div>
           </div>
         ))}
+        {Object.keys(typingUsers).length > 0 && (
+          <div className="typing-indicator" aria-live="polite">
+            <span className="typing-dot" /><span className="typing-dot" /><span className="typing-dot" />
+            <span className="muted small">{Object.values(typingUsers).join(', ')} typing…</span>
+          </div>
+        )}
         <div ref={bottomRef} />
       </div>
       {notice && <div className="chat-notice" role="alert">{notice}</div>}
       <form className="chat-input" onSubmit={send}>
         <AttachButton onClick={() => fileInputRef.current.click()} uploading={uploading} />
         <input type="file" ref={fileInputRef} style={{ display: 'none' }} onChange={onFilePick} />
-        <input value={text} onChange={(e) => setText(e.target.value)} placeholder="Message the group..." />
+        <input value={text} onChange={onTextChange} placeholder="Message the group..." />
         <button type="submit" className="send-btn"><SendIcon size={16} /> Send</button>
       </form>
 
