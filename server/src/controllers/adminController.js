@@ -3,7 +3,17 @@ const { Op } = require('sequelize');
 const {
   User, Department, Message, Connection, Group, GroupMember, GroupMessage, Meeting, MeetingParticipant,
 } = require('../models');
+const sequelize = require('../config/db');
 const generatePassword = require('../utils/generatePassword');
+
+// Same email with different case/spacing ("Bob@x.com" vs " bob@x.com ") is still a
+// duplicate. Store emails normalized and look them up the same way.
+function normalizeEmail(email) {
+  return String(email || '').trim().toLowerCase();
+}
+function findByEmail(email) {
+  return User.findOne({ where: sequelize.where(sequelize.fn('LOWER', sequelize.col('email')), normalizeEmail(email)) });
+}
 const { publicUser } = require('./authController');
 const { isPresent, forgetUser } = require('../utils/presence');
 const { clearMeetingRoom } = require('../sockets');
@@ -40,11 +50,12 @@ async function deleteDepartment(req, res) {
 
 // ---- Employees ----
 async function createEmployee(req, res) {
-  const { name, email, phone, employeeNumber, position, departmentId, role } = req.body;
+  const { name, phone, employeeNumber, position, departmentId, role } = req.body;
+  const email = normalizeEmail(req.body.email);
   if (!name || !email || !departmentId) {
     return res.status(400).json({ error: 'name, email and departmentId are required' });
   }
-  const existing = await User.findOne({ where: { email } });
+  const existing = await findByEmail(email);
   if (existing) return res.status(409).json({ error: 'Email already in use' });
 
   const tempPassword = generatePassword(10);
@@ -74,10 +85,11 @@ async function listEmployees(req, res) {
 async function updateEmployee(req, res) {
   const user = await User.findByPk(req.params.id);
   if (!user) return res.status(404).json({ error: 'Employee not found' });
-  const { name, email, phone, employeeNumber, position, departmentId, role, newPassword } = req.body;
+  const { name, phone, employeeNumber, position, departmentId, role, newPassword } = req.body;
+  const email = req.body.email !== undefined ? normalizeEmail(req.body.email) : undefined;
 
   if (email && email !== user.email) {
-    const existing = await User.findOne({ where: { email } });
+    const existing = await findByEmail(email);
     if (existing && existing.id !== user.id) {
       return res.status(409).json({ error: 'Email already in use by another account' });
     }

@@ -1,4 +1,5 @@
 const bcrypt = require('bcryptjs');
+const sequelize = require('../config/db');
 const jwt = require('jsonwebtoken');
 const { User, Department } = require('../models');
 
@@ -57,10 +58,14 @@ async function changePassword(req, res) {
 // Password changes go through changePassword (requires current password).
 async function updateProfile(req, res) {
   const user = req.user;
-  const { name, phone, email } = req.body;
+  const { name, phone } = req.body;
+  // Same email with different case/spacing is still a duplicate — see adminController.
+  const email = req.body.email !== undefined ? String(req.body.email).trim().toLowerCase() : undefined;
 
   if (email && email !== user.email) {
-    const existing = await User.findOne({ where: { email } });
+    const existing = await User.findOne({
+      where: sequelize.where(sequelize.fn('LOWER', sequelize.col('email')), email),
+    });
     if (existing && existing.id !== user.id) {
       return res.status(409).json({ error: 'Email already in use' });
     }

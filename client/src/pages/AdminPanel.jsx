@@ -4,6 +4,7 @@ import { usePresence } from '../context/PresenceContext';
 import Select from '../components/Select';
 import { getSocket } from '../socket';
 import { confirmDialog, alertDialog } from '../dialogs';
+import { SearchIcon } from '../components/ChatIcons';
 
 const ROLE_OPTIONS = [
   { value: 'employee', label: 'Employee' },
@@ -17,6 +18,8 @@ export default function AdminPanel() {
   const [employees, setEmployees] = useState([]);
   const [newDept, setNewDept] = useState({ name: '', description: '' });
   const [newEmp, setNewEmp] = useState({ name: '', email: '', phone: '', employeeNumber: '', position: '', departmentId: '', role: 'employee' });
+  const [empSearch, setEmpSearch] = useState('');
+  const [empSort, setEmpSort] = useState('name-asc');
   const [lastCreated, setLastCreated] = useState(null);
   const [editing, setEditing] = useState(null); // employee object being edited, or null
   const [editForm, setEditForm] = useState(null);
@@ -95,6 +98,32 @@ export default function AdminPanel() {
   const deptName = (id) => departments.find((d) => d.id === id)?.name || '—';
   const deptOptions = departments.map((d) => ({ value: d.id, label: d.name }));
 
+  const SORT_OPTIONS = [
+    { value: 'name-asc', label: 'Name (A–Z)' },
+    { value: 'name-desc', label: 'Name (Z–A)' },
+    { value: 'dept-asc', label: 'Department (A–Z)' },
+    { value: 'position-asc', label: 'Position (A–Z)' },
+    { value: 'status', label: 'Status (active first)' },
+  ];
+
+  // Find by name, email, phone, employee number or position; then sort.
+  const q = empSearch.trim().toLowerCase();
+  const visibleEmployees = employees
+    .filter((e) => !q || [e.name, e.email, e.phone, e.employeeNumber, e.position, deptName(e.departmentId)]
+      .some((f) => (f || '').toLowerCase().includes(q)))
+    .sort((a, b) => {
+      switch (empSort) {
+        case 'name-desc': return b.name.localeCompare(a.name);
+        case 'dept-asc': return deptName(a.departmentId).localeCompare(deptName(b.departmentId)) || a.name.localeCompare(b.name);
+        case 'position-asc': return (a.position || '').localeCompare(b.position || '') || a.name.localeCompare(b.name);
+        case 'status': {
+          const aActive = isUserActive(a.id, a.isActive), bActive = isUserActive(b.id, b.isActive);
+          return (bActive - aActive) || a.name.localeCompare(b.name);
+        }
+        default: return a.name.localeCompare(b.name);
+      }
+    });
+
   return (
     <div className="panel">
       <h2>Admin Panel</h2>
@@ -161,11 +190,28 @@ export default function AdminPanel() {
             </div>
           )}
 
+          <div className="inline-form">
+            <div className="search-input">
+              <SearchIcon size={16} />
+              <input
+                placeholder="Search employees by name, email, phone, position..."
+                value={empSearch}
+                onChange={(e) => setEmpSearch(e.target.value)}
+                aria-label="Search employees"
+              />
+            </div>
+            <Select value={empSort} onChange={setEmpSort} options={SORT_OPTIONS} ariaLabel="Sort employees" />
+            <span className="muted small">{visibleEmployees.length} of {employees.length}</span>
+          </div>
+
           <div className="table-scroll">
           <table className="admin-table">
             <thead><tr><th>Name</th><th>Position</th><th>Department</th><th>Phone</th><th>Status</th><th></th></tr></thead>
             <tbody>
-              {employees.map((e) => (
+              {visibleEmployees.length === 0 && (
+                <tr><td colSpan={6} className="muted" style={{ textAlign: 'center', padding: '18px 0' }}>No employees match "{empSearch}"</td></tr>
+              )}
+              {visibleEmployees.map((e) => (
                 <tr key={e.id}>
                   <td>{e.name}{e.role === 'admin' && <span className="status-pill accepted ml">admin</span>}</td>
                   <td>{e.position}</td>
