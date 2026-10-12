@@ -4,10 +4,11 @@ import api from '../api';
 import { getSocket } from '../socket';
 import { useAuth } from '../context/AuthContext';
 import {
-  AttachButton, FileAttachment, SendIcon, TrashIcon, PhoneIcon, VideoIcon, CheckSquareIcon,
+  AttachButton, SendIcon, TrashIcon, PhoneIcon, VideoIcon, CheckSquareIcon,
   PhoneIncomingIcon, PhoneMissedIcon, PhoneXIcon, CheckIcon, BanIcon,
 } from '../components/ChatIcons';
 import BackButton from '../components/BackButton';
+import FileAttachment from '../components/FileAttachment';
 import MessageMenu from '../components/MessageMenu';
 import { useNotificationCenter } from '../context/NotificationCenterContext';
 import { confirmDialog, alertDialog } from '../dialogs';

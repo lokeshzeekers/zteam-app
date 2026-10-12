@@ -1,4 +1,3 @@
-import api from '../api';
 
 const Icon = ({ children, size = 20 }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{children}</svg>
@@ -66,16 +65,6 @@ export const BanIcon = (props) => (
 export const CheckIcon = (props) => (
   <Icon {...props}><polyline points="20 6 9 17 4 12" /></Icon>
 );
-
-// The attachment inside a chat bubble: a file chip instead of a bare 📎 link.
-export function FileAttachment({ fileUrl, fileName }) {
-  return (
-    <a className="file-chip" href={(api.defaults.baseURL || '') + fileUrl} target="_blank" rel="noreferrer" title={fileName}>
-      <span className="file-chip-icon"><FileIcon size={18} /></span>
-      <span className="file-chip-name">{fileName}</span>
-    </a>
-  );
-}
 
 // The little button next to the message box that opens the file picker.
 export function AttachButton({ onClick, uploading }) {

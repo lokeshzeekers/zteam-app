@@ -57,4 +57,21 @@ function handleUpload(req, res, next) {
 
 router.post('/upload', requireAuth, handleUpload, uploadFile);
 
+// Authenticated file fetch. The client reads this with its Bearer token and
+// turns the response into a blob for preview/download, so it works the same
+// in the browser, behind a reverse proxy that only forwards /api, and inside
+// Electron (where a relative /uploads/... URL would not resolve at all).
+router.get('/:filename', requireAuth, (req, res) => {
+  const { filename } = req.params;
+  if (!filename || path.basename(filename) !== filename || filename.startsWith('.')) {
+    return res.status(400).json({ error: 'Invalid file name' });
+  }
+  const full = path.join(uploadDir, filename);
+  if (!fs.existsSync(full)) return res.status(404).json({ error: 'File not found' });
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Content-Security-Policy', "sandbox; default-src 'none'");
+  res.setHeader('Cache-Control', 'private, max-age=3600');
+  res.sendFile(full, { dotfiles: 'deny' });
+});
+
 module.exports = router;
