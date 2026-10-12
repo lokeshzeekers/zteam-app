@@ -100,7 +100,13 @@ function createWindow() {
     },
   });
 
-  mainWindow.loadURL(START_URL);
+  // The UI is the live website, so make sure each launch pulls the latest build instead
+  // of a copy of index.html/assets that Chromium cached from an earlier version.
+  mainWindow.webContents.session.clearCache()
+    .catch(() => { /* non-fatal */ })
+    .finally(() => {
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.loadURL(START_URL);
+    });
 
   // Clear the blinking taskbar flag AND the notification badge whenever the window regains focus.
   // Also hand keyboard focus back to the page itself, so after any OS-level dialog or window
