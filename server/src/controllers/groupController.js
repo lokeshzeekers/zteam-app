@@ -4,6 +4,8 @@ const { canCommunicate } = require('../utils/permissions');
 const { isPresent } = require('../utils/presence');
 
 const PAGE_SIZE = 50;
+const AROUND_CONTEXT = 25; // messages shown above a jumped-to message
+const AROUND_MAX = 500;    // cap on the window size
 
 async function isMember(groupId, userId) {
   const row = await GroupMember.findOne({ where: { groupId, userId } });
@@ -195,6 +197,23 @@ async function getGroupMessages(req, res) {
   const hide = await GroupHide.findOne({ where: { userId: req.user.id, groupId } });
   const cutoffs = [membership.createdAt, hide?.hiddenAt].filter(Boolean).map((d) => new Date(d));
   if (cutoffs.length) where.createdAt = { [Op.gt]: new Date(Math.max(...cutoffs.map((d) => d.getTime()))) };
+  // Optional jump-to-message: `around=<messageId>` returns a window starting a little
+  // before that message and running to the newest, under the same visibility rules.
+  const around = req.query.around ? Number(req.query.around) : null;
+  if (around) {
+    const target = await GroupMessage.findOne({ where: { ...where, id: around } });
+    if (target) {
+      const older = await GroupMessage.findAll({ where: { ...where, id: { [Op.lt]: around } }, order: [['id', 'DESC']], limit: AROUND_CONTEXT + 1 });
+      const hasMoreOlder = older.length > AROUND_CONTEXT;
+      const ctx = older.slice(0, AROUND_CONTEXT);
+      const startId = ctx.length ? ctx[ctx.length - 1].id : around;
+      const windowRows = await GroupMessage.findAll({ where: { ...where, id: { [Op.gte]: startId } }, order: [['id', 'ASC']], limit: AROUND_MAX + 1 });
+      const reachesNewest = windowRows.length <= AROUND_MAX;
+      if (reachesNewest) await markRead(req.user.id, Number(groupId), req.app.get('io'));
+      return res.json({ messages: windowRows.slice(0, AROUND_MAX).map(toClient), hasMore: hasMoreOlder, reachesNewest });
+    }
+  }
+
   const before = req.query.before ? Number(req.query.before) : null;
   if (before) {
     const anchor = await GroupMessage.findByPk(before);
@@ -212,6 +231,26 @@ async function getGroupMessages(req, res) {
   }
 
   res.json({ messages: messages.map(toClient), hasMore });
+}
+
+// Search inside ONE group. Same membership/join/clear cutoffs as getGroupMessages;
+// deleted messages never match. Newest first; ids let the client jump to each hit.
+async function searchGroupMessages(req, res) {
+  const groupId = req.params.id;
+  const membership = await GroupMember.findOne({ where: { groupId, userId: req.user.id } });
+  if (!membership) return res.status(403).json({ error: 'Not a member of this group' });
+  const q = (req.query.q || '').trim();
+  if (q.length < 1) return res.json({ matches: [] });
+
+  const where = {
+    groupId, deletedAt: null, type: 'text',
+    content: { [Op.like]: `%${q}%` },
+  };
+  const hide = await GroupHide.findOne({ where: { userId: req.user.id, groupId } });
+  const cutoffs = [membership.createdAt, hide?.hiddenAt].filter(Boolean).map((d) => new Date(d));
+  if (cutoffs.length) where.createdAt = { [Op.gt]: new Date(Math.max(...cutoffs.map((d) => d.getTime()))) };
+  const rows = await GroupMessage.findAll({ where, order: [['id', 'DESC']], limit: 200 });
+  res.json({ matches: rows.map((m) => ({ id: m.id, content: m.content, createdAt: m.createdAt, senderId: m.senderId })) });
 }
 
 // Shared by getGroupMessages and markGroupRead — findOrCreate+save rather than
@@ -321,6 +360,7 @@ async function editGroupMessage(req, res) {
 }
 
 module.exports = {
+  searchGroupMessages,
   createGroup, listMyGroups, getGroup, updateGroup, deleteGroup, getGroupMessages, isMember,
   hideGroup, deleteGroupMessages, markGroupRead, editGroupMessage,
 };

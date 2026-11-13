@@ -5,11 +5,16 @@ import { getSocket } from '../socket';
 import { useAuth } from '../context/AuthContext';
 import {
   AttachButton, SendIcon, TrashIcon, PhoneIcon, VideoIcon, CheckSquareIcon,
-  PhoneIncomingIcon, PhoneMissedIcon, PhoneXIcon, CheckIcon, BanIcon,
+  PhoneIncomingIcon, PhoneMissedIcon, PhoneXIcon, CheckIcon, BanIcon, SearchIcon,
 } from '../components/ChatIcons';
 import BackButton from '../components/BackButton';
 import FileAttachment from '../components/FileAttachment';
 import MessageMenu from '../components/MessageMenu';
+import DateSeparator from '../components/DateSeparator';
+import ChatSearchBar from '../components/ChatSearchBar';
+import Highlight from '../components/Highlight';
+import useChatJump from '../hooks/useChatJump';
+import { withDateSeparators } from '../utils/dates';
 import { useNotificationCenter } from '../context/NotificationCenterContext';
 import { confirmDialog, alertDialog } from '../dialogs';
 
@@ -60,6 +65,9 @@ export default function ChatWindow({ onStartCall }) {
   const [otherTyping, setOtherTyping] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [editText, setEditText] = useState('');
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [currentMatchId, setCurrentMatchId] = useState(null);
   const bottomRef = useRef(null);
   const fileInputRef = useRef(null);
   const typingTimeoutRef = useRef(null);
@@ -70,11 +78,23 @@ export default function ChatWindow({ onStartCall }) {
     api.get(`/api/calls/with/${userId}`).then((r) => setCalls(r.data.calls)).catch(() => {});
   }
 
+  const fetchAround = useCallback((id) => (
+    api.get(`/api/messages/with/${userId}`, { params: { around: id } }).then((r) => r.data)
+  ), [userId]);
+  const jump = useChatJump({ scopeKey: userId, setMessages, setHasMore, fetchAround });
+  const { takeInitial, applyWindow, clearDetached } = jump;
+
   const loadFirstPage = useCallback(() => {
-    return api.get(`/api/messages/with/${userId}`)
-      .then((r) => { setMessages(r.data.messages); setHasMore(r.data.hasMore); })
+    // Coming from global Search with ?msg=<id>: open the chat positioned on that message.
+    const around = takeInitial();
+    const req = around ? fetchAround(around) : api.get(`/api/messages/with/${userId}`).then((r) => r.data);
+    return req
+      .then((data) => {
+        if (around) { applyWindow(around, data); return; }
+        setMessages(data.messages); setHasMore(data.hasMore); clearDetached();
+      })
       .catch((err) => setError(err?.response?.data?.error || 'Cannot load conversation'));
-  }, [userId]);
+  }, [userId, takeInitial, fetchAround, applyWindow, clearDetached]);
 
   async function loadOlder() {
     if (!hasMore || loadingOlder || messages.length === 0) return;
@@ -174,8 +194,23 @@ export default function ChatWindow({ onStartCall }) {
   }, [userId, loadFirstPage, markDMRead, user.id]);
 
   useEffect(() => {
+    if (jump.pendingRef.current) return; // a jump-to-message is about to scroll; don't fight it
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages.length, calls.length]);
+  }, [messages.length, calls.length]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // After a jump window renders, scroll to the target message.
+  useEffect(() => { jump.afterRender(); }, [messages]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const fetchMatches = useCallback((q) => (
+    api.get(`/api/messages/with/${userId}/search`, { params: { q } }).then((r) => r.data.matches)
+  ), [userId]);
+  function onSearchJump(match) { setCurrentMatchId(match.id); jump.jumpTo(match.id); }
+  function closeSearch() { setSearchOpen(false); setSearchTerm(''); setCurrentMatchId(null); }
+
+  async function backToLatest() {
+    await loadFirstPage();
+    requestAnimationFrame(() => bottomRef.current?.scrollIntoView({ behavior: 'smooth' }));
+  }
 
   // Merge messages + call log entries into one time-ordered timeline.
   const timeline = useMemo(() => {
@@ -184,7 +219,7 @@ export default function ChatWindow({ onStartCall }) {
       ...calls.map((c) => ({ kind: 'call', time: c.startedAt, data: c })),
     ];
     items.sort((a, b) => new Date(a.time) - new Date(b.time));
-    return items;
+    return withDateSeparators(items, (i) => i.time);
   }, [messages, calls]);
 
   function onTextChange(e) {
@@ -302,6 +337,15 @@ export default function ChatWindow({ onStartCall }) {
         <div className="chat-header-actions">
           <button
             type="button"
+            className={`icon-btn-sm${searchOpen ? ' active' : ''}`}
+            onClick={() => (searchOpen ? closeSearch() : setSearchOpen(true))}
+            title="Search in chat"
+            aria-label="Search in chat"
+          >
+            <SearchIcon size={19} />
+          </button>
+          <button
+            type="button"
             className="icon-btn-sm"
             onClick={() => onStartCall?.(Number(userId), 'audio')}
             title="Audio call"
@@ -333,6 +377,10 @@ export default function ChatWindow({ onStartCall }) {
         </div>
       </div>
 
+      {searchOpen && (
+        <ChatSearchBar fetchMatches={fetchMatches} onJump={onSearchJump} onTermChange={setSearchTerm} onClose={closeSearch} />
+      )}
+
       {selecting && selectedIds.length > 0 && (
         <div className="selection-bar">
           <span>{selectedIds.length} selected</span>
@@ -348,10 +396,16 @@ export default function ChatWindow({ onStartCall }) {
             {loadingOlder ? 'Loading…' : 'Load older messages'}
           </button>
         )}
-        {timeline.map((item) => item.kind === 'call' ? (
+        {timeline.map((item) => item.kind === 'date' ? (
+          <DateSeparator key={item.key} time={item.time} />
+        ) : item.kind === 'call' ? (
           <CallHistoryRow key={`call-${item.data.id}`} call={item.data} meId={user.id} />
         ) : (
-          <div key={item.data.id} className={`msg ${item.data.senderId === user.id ? 'me' : 'them'} ${selecting && item.data.senderId === user.id ? 'selectable' : ''}`}>
+          <div
+            key={item.data.id}
+            id={`msg-${item.data.id}`}
+            className={`msg ${item.data.senderId === user.id ? 'me' : 'them'} ${selecting && item.data.senderId === user.id ? 'selectable' : ''}${jump.highlightId === item.data.id ? ' msg-flash' : ''}${currentMatchId === item.data.id && searchOpen ? ' msg-current-match' : ''}`}
+          >
             {selecting && item.data.senderId === user.id && !item.data.deletedAt && (
               <input
                 type="checkbox"
@@ -381,7 +435,7 @@ export default function ChatWindow({ onStartCall }) {
                   {item.data.type === 'file' ? (
                     <FileAttachment fileUrl={item.data.fileUrl} fileName={item.data.fileName} />
                   ) : (
-                    <span className="msg-text">{item.data.content}</span>
+                    <span className="msg-text"><Highlight text={item.data.content} term={searchOpen ? searchTerm : ''} /></span>
                   )}
                   {!selecting && item.data.senderId === user.id && item.data.type === 'text' && (
                     <MessageMenu onEdit={() => startEdit(item.data)} />
@@ -403,6 +457,9 @@ export default function ChatWindow({ onStartCall }) {
         )}
         <div ref={bottomRef} />
       </div>
+      {jump.detached && (
+        <button type="button" className="jump-latest-btn" onClick={backToLatest}>Jump to latest ↓</button>
+      )}
       {notice && <div className="chat-notice" role="alert">{notice}</div>}
       <form className="chat-input" onSubmit={send}>
         <AttachButton onClick={() => fileInputRef.current.click()} uploading={uploading} />

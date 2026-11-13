@@ -4,6 +4,18 @@ const { canCommunicate } = require('../utils/permissions');
 const { isPresent } = require('../utils/presence');
 
 const PAGE_SIZE = 50;
+const AROUND_CONTEXT = 25; // messages shown above a jumped-to message
+const AROUND_MAX = 500;    // cap on the window size
+
+// Same "I'm looking at this chat" read-marking the newest page does in getConversation.
+async function markIncomingRead(req, meId, otherId) {
+  const now = new Date();
+  await Message.update({ readAt: now, deliveredAt: now }, { where: { senderId: otherId, receiverId: meId, readAt: null } });
+  const justRead = await Message.findAll({ where: { senderId: otherId, receiverId: meId, readAt: now }, attributes: ['id'] });
+  if (justRead.length) {
+    req.app.get('io')?.to(`user:${otherId}`).emit('messages-read', { messageIds: justRead.map((m) => m.id), by: meId });
+  }
+}
 
 // A deleted message is never sent to a client with its content — only a
 // "this message was deleted" placeholder (id, sender, time, deletedAt) so both
@@ -40,6 +52,25 @@ async function getConversation(req, res) {
     ],
   };
   if (clear) where.createdAt = { [Op.gt]: clear.clearedAt };
+
+  // Optional jump-to-message: `around=<messageId>` returns a window that starts a little
+  // before that message and runs to the newest one, so the client can scroll to it.
+  // Same visibility `where` as every other read of this conversation.
+  const around = req.query.around ? Number(req.query.around) : null;
+  if (around) {
+    const target = await Message.findOne({ where: { ...where, id: around } });
+    if (target) {
+      const older = await Message.findAll({ where: { ...where, id: { [Op.lt]: around } }, order: [['id', 'DESC']], limit: AROUND_CONTEXT + 1 });
+      const hasMoreOlder = older.length > AROUND_CONTEXT;
+      const ctx = older.slice(0, AROUND_CONTEXT);
+      const startId = ctx.length ? ctx[ctx.length - 1].id : around;
+      const windowRows = await Message.findAll({ where: { ...where, id: { [Op.gte]: startId } }, order: [['id', 'ASC']], limit: AROUND_MAX + 1 });
+      const reachesNewest = windowRows.length <= AROUND_MAX;
+      const rows = windowRows.slice(0, AROUND_MAX);
+      if (reachesNewest) await markIncomingRead(req, me.id, otherId);
+      return res.json({ messages: rows.map(toClient), hasMore: hasMoreOlder, reachesNewest });
+    }
+  }
 
   const before = req.query.before ? Number(req.query.before) : null;
   if (before) {
@@ -222,4 +253,30 @@ async function editMessage(req, res) {
   res.json({ message });
 }
 
-module.exports = { getConversation, listInbox, clearConversation, deleteMessages, editMessage, markConversationRead };
+// Search inside ONE conversation. Same access + clear-point rules as getConversation,
+// deleted messages never match. Newest first; ids let the client jump to each hit.
+async function searchConversation(req, res) {
+  const me = req.user;
+  const otherId = Number(req.params.userId);
+  const q = (req.query.q || '').trim();
+  if (q.length < 1) return res.json({ matches: [] });
+  const other = await User.findByPk(otherId);
+  if (!other) return res.status(404).json({ error: 'User not found' });
+  if (!(await canCommunicate(me, other))) return res.status(403).json({ error: 'Not connected with this user yet' });
+
+  const clear = await ConversationClear.findOne({ where: { userId: me.id, otherUserId: otherId } });
+  const where = {
+    deletedAt: null,
+    type: 'text',
+    content: { [Op.like]: `%${q}%` },
+    [Op.or]: [
+      { senderId: me.id, receiverId: otherId },
+      { senderId: otherId, receiverId: me.id },
+    ],
+  };
+  if (clear) where.createdAt = { [Op.gt]: clear.clearedAt };
+  const rows = await Message.findAll({ where, order: [['id', 'DESC']], limit: 200 });
+  res.json({ matches: rows.map((m) => ({ id: m.id, content: m.content, createdAt: m.createdAt, senderId: m.senderId })) });
+}
+
+module.exports = { searchConversation, getConversation, listInbox, clearConversation, deleteMessages, editMessage, markConversationRead };

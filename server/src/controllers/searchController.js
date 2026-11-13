@@ -1,6 +1,6 @@
 const { Op } = require('sequelize');
 const { isPresent } = require('../utils/presence');
-const { Message, GroupMessage, GroupMember, Group, User, Department, ConversationClear, GroupHide } = require('../models');
+const { Message, GroupMessage, GroupMember, Group, User, Department, ConversationClear, GroupHide, Connection } = require('../models');
 
 // Search across every DM and group conversation the user can actually see —
 // same visibility rules the normal chat views already enforce (soft-deleted
@@ -85,9 +85,21 @@ async function searchDirectory(req, res) {
     limit: 50,
   });
 
+  // canMessage mirrors utils/permissions.canCommunicate (same department, or an accepted
+  // connection) so the client can open the chat directly when it is allowed, and fall back
+  // to the department page (where a request can be sent) when it is not.
+  const me = req.user;
+  const accepted = await Connection.findAll({
+    where: { status: 'accepted', [Op.or]: [{ requesterId: me.id }, { receiverId: me.id }] },
+  });
+  const connectedIds = new Set(accepted.map((c) => (c.requesterId === me.id ? c.receiverId : c.requesterId)));
+  const canMessage = (u) => u.id !== me.id && ((me.departmentId && me.departmentId === u.departmentId) || connectedIds.has(u.id));
+
   res.json({
     results: users.map((u) => ({
       id: u.id, name: u.name, email: u.email, position: u.position,
+      isSelf: u.id === me.id,
+      canMessage: !!canMessage(u),
       isActive: isPresent(u),
       department: u.department ? { id: u.department.id, name: u.department.name } : null,
     })),

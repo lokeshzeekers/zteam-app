@@ -5,9 +5,14 @@ import { getSocket } from '../socket';
 import { useAuth } from '../context/AuthContext';
 import { usePresence } from '../context/PresenceContext';
 import FileAttachment from '../components/FileAttachment';
-import { AttachButton, SendIcon, TrashIcon, CheckSquareIcon, PhoneIncomingIcon, PhoneMissedIcon, PhoneXIcon, CheckIcon, VideoIcon, PhoneIcon, BanIcon, UsersIcon, SettingsIcon } from '../components/ChatIcons';
+import { AttachButton, SendIcon, TrashIcon, CheckSquareIcon, PhoneIncomingIcon, PhoneMissedIcon, PhoneXIcon, CheckIcon, VideoIcon, PhoneIcon, BanIcon, UsersIcon, SettingsIcon, SearchIcon } from '../components/ChatIcons';
 import BackButton from '../components/BackButton';
 import MessageMenu from '../components/MessageMenu';
+import DateSeparator from '../components/DateSeparator';
+import ChatSearchBar from '../components/ChatSearchBar';
+import Highlight from '../components/Highlight';
+import useChatJump from '../hooks/useChatJump';
+import { withDateSeparators } from '../utils/dates';
 import { useNotificationCenter } from '../context/NotificationCenterContext';
 import { confirmDialog, alertDialog } from '../dialogs';
 
@@ -80,6 +85,9 @@ export default function GroupChat() {
   const [typingUsers, setTypingUsers] = useState({}); // userId -> name
   const [editingId, setEditingId] = useState(null);
   const [editText, setEditText] = useState('');
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [currentMatchId, setCurrentMatchId] = useState(null);
   const bottomRef = useRef(null);
   const fileInputRef = useRef(null);
   const typingTimeoutRef = useRef(null);
@@ -92,11 +100,23 @@ export default function GroupChat() {
   function loadCalls() {
     api.get(`/api/calls/group/${groupId}`).then((r) => setCalls(r.data.calls)).catch(() => {});
   }
+  const fetchAround = useCallback((id) => (
+    api.get(`/api/groups/${groupId}/messages`, { params: { around: id } }).then((r) => r.data)
+  ), [groupId]);
+  const jump = useChatJump({ scopeKey: groupId, setMessages, setHasMore, fetchAround });
+  const { takeInitial, applyWindow, clearDetached } = jump;
+
   const loadFirstPage = useCallback(() => {
-    return api.get(`/api/groups/${groupId}/messages`)
-      .then((r) => { setMessages(r.data.messages); setHasMore(r.data.hasMore); })
+    // Coming from global Search with ?msg=<id>: open the group positioned on that message.
+    const around = takeInitial();
+    const req = around ? fetchAround(around) : api.get(`/api/groups/${groupId}/messages`).then((r) => r.data);
+    return req
+      .then((data) => {
+        if (around) { applyWindow(around, data); return; }
+        setMessages(data.messages); setHasMore(data.hasMore); clearDetached();
+      })
       .catch(() => {});
-  }, [groupId]);
+  }, [groupId, takeInitial, fetchAround, applyWindow, clearDetached]);
 
   async function loadOlder() {
     if (!hasMore || loadingOlder || messages.length === 0) return;
@@ -234,7 +254,24 @@ export default function GroupChat() {
     };
   }, [groupId, loadFirstPage, markGroupRead, user.id]);
 
-  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages, calls]);
+  useEffect(() => {
+    if (jump.pendingRef.current) return; // a jump-to-message is about to scroll; don't fight it
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages, calls]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // After a jump window renders, scroll to the target message.
+  useEffect(() => { jump.afterRender(); }, [messages]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const fetchMatches = useCallback((q) => (
+    api.get(`/api/groups/${groupId}/messages/search`, { params: { q } }).then((r) => r.data.matches)
+  ), [groupId]);
+  function onSearchJump(match) { setCurrentMatchId(match.id); jump.jumpTo(match.id); }
+  function closeSearch() { setSearchOpen(false); setSearchTerm(''); setCurrentMatchId(null); }
+
+  async function backToLatest() {
+    await loadFirstPage();
+    requestAnimationFrame(() => bottomRef.current?.scrollIntoView({ behavior: 'smooth' }));
+  }
 
   const isOwner = group && (group.createdBy === user.id || user.role === 'admin');
 
@@ -245,7 +282,7 @@ export default function GroupChat() {
       ...calls.map((c) => ({ kind: 'call', time: c.startedAt || c.scheduledAt, data: c })),
     ];
     items.sort((a, b) => new Date(a.time) - new Date(b.time));
-    return items;
+    return withDateSeparators(items, (i) => i.time);
   }, [messages, calls]);
 
   function onTextChange(e) {
@@ -435,6 +472,15 @@ export default function GroupChat() {
             <UsersIcon size={19} />
             <span className="icon-badge">{group?.members.length || 0}</span>
           </button>
+          <button
+            type="button"
+            className={`icon-btn-sm${searchOpen ? ' active' : ''}`}
+            onClick={() => (searchOpen ? closeSearch() : setSearchOpen(true))}
+            title="Search in group"
+            aria-label="Search in group"
+          >
+            <SearchIcon size={19} />
+          </button>
           <button type="button" className="icon-btn-sm" onClick={() => startMeetingNow('audio')} title="Start a group audio meeting now" aria-label="Start group audio meeting">
             <PhoneIcon size={19} />
           </button>
@@ -460,6 +506,10 @@ export default function GroupChat() {
           </button>
         </div>
       </div>
+
+      {searchOpen && (
+        <ChatSearchBar fetchMatches={fetchMatches} onJump={onSearchJump} onTermChange={setSearchTerm} onClose={closeSearch} />
+      )}
 
       {selecting && selectedIds.length > 0 && (
         <div className="selection-bar">
@@ -496,10 +546,16 @@ export default function GroupChat() {
             <p className="muted">Start the conversation.</p>
           </div>
         )}
-        {timeline.map((item) => item.kind === 'call' ? (
+        {timeline.map((item) => item.kind === 'date' ? (
+          <DateSeparator key={item.key} time={item.time} />
+        ) : item.kind === 'call' ? (
           <GroupCallHistoryRow key={`call-${item.data.id}`} call={item.data} />
         ) : (
-          <div key={item.data.id} className={`msg ${item.data.senderId === user.id ? 'me' : 'them'} ${selecting && item.data.senderId === user.id ? 'selectable' : ''}`}>
+          <div
+            key={item.data.id}
+            id={`msg-${item.data.id}`}
+            className={`msg ${item.data.senderId === user.id ? 'me' : 'them'} ${selecting && item.data.senderId === user.id ? 'selectable' : ''}${jump.highlightId === item.data.id ? ' msg-flash' : ''}${currentMatchId === item.data.id && searchOpen ? ' msg-current-match' : ''}`}
+          >
             {selecting && item.data.senderId === user.id && !item.data.deletedAt && (
               <input
                 type="checkbox"
@@ -532,7 +588,7 @@ export default function GroupChat() {
                   {item.data.type === 'file' ? (
                     <FileAttachment fileUrl={item.data.fileUrl} fileName={item.data.fileName} />
                   ) : (
-                    <span className="msg-text">{item.data.content}</span>
+                    <span className="msg-text"><Highlight text={item.data.content} term={searchOpen ? searchTerm : ''} /></span>
                   )}
                   {!selecting && item.data.senderId === user.id && (
                     <MessageMenu
@@ -558,6 +614,9 @@ export default function GroupChat() {
         )}
         <div ref={bottomRef} />
       </div>
+      {jump.detached && (
+        <button type="button" className="jump-latest-btn" onClick={backToLatest}>Jump to latest ↓</button>
+      )}
       {notice && <div className="chat-notice" role="alert">{notice}</div>}
       <form className="chat-input" onSubmit={send}>
         <AttachButton onClick={() => fileInputRef.current.click()} uploading={uploading} />
