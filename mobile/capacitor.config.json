@@ -1,0 +1,13 @@
+{
+  "appId": "com.zteam.mobile",
+  "appName": "Zteam",
+  "webDir": "www",
+  "server": {
+    "url": "https://zteam.zeekerstech.com",
+    "cleartext": false,
+    "androidScheme": "https"
+  },
+  "android": {
+    "allowMixedContent": false
+  }
+}

@@ -32,6 +32,14 @@ export default function Search() {
     }
   }
 
+  // Open the chat straight away when messaging is allowed (same department or accepted
+  // connection); otherwise fall back to the department page, where a request can be sent.
+  function openPerson(p) {
+    if (p.isSelf) navigate('/profile');
+    else if (p.canMessage) navigate(`/chat/${p.id}`);
+    else navigate(p.department ? `/department/${p.department.id}` : '/directory');
+  }
+
   const hasResults = messages && (messages.directMessages.length > 0 || messages.groupMessages.length > 0 || (people && people.length > 0));
 
   return (
@@ -57,11 +65,11 @@ export default function Search() {
           <h3>People</h3>
           <div className="search-results-list">
             {people.map((p) => (
-              <div className="search-result-row" key={`u-${p.id}`} onClick={() => navigate(p.department ? `/department/${p.department.id}` : '/directory')} role="button" tabIndex={0}>
+              <div className="search-result-row" key={`u-${p.id}`} onClick={() => openPerson(p)} onKeyDown={(e) => { if (e.key === 'Enter') openPerson(p); }} role="button" tabIndex={0}>
                 <div className={`avatar ${isUserActive(p.id, p.isActive) ? 'online' : 'offline'}`} style={{ background: '#2f6feb' }}>{p.name[0].toUpperCase()}</div>
                 <div>
                   <strong>{p.name}</strong>
-                  <div className="muted small">{p.position || 'Member'}{p.department ? ` · ${p.department.name}` : ''} · {p.email}</div>
+                  <div className="muted small">{p.position || 'Member'}{p.department ? ` · ${p.department.name}` : ''} · {p.email}{!p.isSelf && !p.canMessage ? ' · Send a request to chat' : ''}</div>
                 </div>
               </div>
             ))}
@@ -74,7 +82,7 @@ export default function Search() {
           <h3>Direct messages</h3>
           <div className="search-results-list">
             {messages.directMessages.map((m) => (
-              <div className="search-result-row" key={`dm-${m.id}`} onClick={() => navigate(`/chat/${m.withUser.id}`)} role="button" tabIndex={0}>
+              <div className="search-result-row" key={`dm-${m.id}`} onClick={() => navigate(`/chat/${m.withUser.id}?msg=${m.id}`)} role="button" tabIndex={0}>
                 <div>
                   <strong>{m.withUser.name}</strong>
                   <div className="muted small">{m.content}</div>
@@ -91,7 +99,7 @@ export default function Search() {
           <h3>Group messages</h3>
           <div className="search-results-list">
             {messages.groupMessages.map((m) => (
-              <div className="search-result-row" key={`g-${m.id}`} onClick={() => navigate(`/groups/${m.group.id}`)} role="button" tabIndex={0}>
+              <div className="search-result-row" key={`g-${m.id}`} onClick={() => navigate(`/groups/${m.group.id}?msg=${m.id}`)} role="button" tabIndex={0}>
                 <div>
                   <strong>{m.group.name}</strong>
                   <div className="muted small">{m.content}</div>
