@@ -10,6 +10,7 @@ import {
 import BackButton from '../components/BackButton';
 import FileAttachment from '../components/FileAttachment';
 import MessageMenu from '../components/MessageMenu';
+import ChatMenu from '../components/ChatMenu';
 import DateSeparator from '../components/DateSeparator';
 import ChatSearchBar from '../components/ChatSearchBar';
 import Highlight from '../components/Highlight';
@@ -334,7 +335,7 @@ export default function ChatWindow({ onStartCall }) {
           <BackButton fallback="/" />
           <strong>Conversation</strong>
         </div>
-        <div className="chat-header-actions">
+        <div className="chat-header-actions chat-actions-inline">
           <button
             type="button"
             className={`icon-btn-sm${searchOpen ? ' active' : ''}`}
@@ -375,6 +376,16 @@ export default function ChatWindow({ onStartCall }) {
             <TrashIcon size={19} />
           </button>
         </div>
+        <ChatMenu
+          className="chat-actions-menu"
+          items={[
+            { label: searchOpen ? 'Close search' : 'Search', onClick: () => (searchOpen ? closeSearch() : setSearchOpen(true)) },
+            { label: 'Voice call', onClick: () => onStartCall?.(Number(userId), 'audio') },
+            { label: 'Video call', onClick: () => onStartCall?.(Number(userId), 'video') },
+            { label: selecting ? 'Cancel selection' : 'Select messages', onClick: toggleSelecting },
+            { label: 'Delete conversation', onClick: deleteConversation, danger: true },
+          ]}
+        />
       </div>
 
       {searchOpen && (
@@ -465,7 +476,7 @@ export default function ChatWindow({ onStartCall }) {
         <AttachButton onClick={() => fileInputRef.current.click()} uploading={uploading} />
         <input type="file" ref={fileInputRef} style={{ display: 'none' }} onChange={onFilePick} />
         <input value={text} onChange={onTextChange} placeholder="Type a message..." />
-        <button type="submit" className="send-btn"><SendIcon size={16} /> Send</button>
+        <button type="submit" className="send-btn" aria-label="Send"><SendIcon size={16} /> <span className="send-label">Send</span></button>
       </form>
     </div>
   );

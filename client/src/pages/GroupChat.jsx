@@ -8,6 +8,7 @@ import FileAttachment from '../components/FileAttachment';
 import { AttachButton, SendIcon, TrashIcon, CheckSquareIcon, PhoneIncomingIcon, PhoneMissedIcon, PhoneXIcon, CheckIcon, VideoIcon, PhoneIcon, BanIcon, UsersIcon, SettingsIcon, SearchIcon } from '../components/ChatIcons';
 import BackButton from '../components/BackButton';
 import MessageMenu from '../components/MessageMenu';
+import ChatMenu from '../components/ChatMenu';
 import DateSeparator from '../components/DateSeparator';
 import ChatSearchBar from '../components/ChatSearchBar';
 import Highlight from '../components/Highlight';
@@ -461,7 +462,7 @@ export default function GroupChat() {
           <BackButton fallback="/groups" />
           <strong>{group?.name || 'Group'}</strong>
         </div>
-        <div className="chat-header-actions">
+        <div className="chat-header-actions chat-actions-inline">
           <button
             type="button"
             className={`icon-btn-sm has-badge${showMembers ? ' active' : ''}`}
@@ -505,6 +506,18 @@ export default function GroupChat() {
             <TrashIcon size={19} />
           </button>
         </div>
+        <ChatMenu
+          className="chat-actions-menu"
+          items={[
+            { label: `Members (${group?.members.length || 0})`, onClick: () => setShowMembers((v) => !v), active: showMembers },
+            { label: searchOpen ? 'Close search' : 'Search', onClick: () => (searchOpen ? closeSearch() : setSearchOpen(true)) },
+            { label: 'Voice meeting', onClick: () => startMeetingNow('audio') },
+            { label: 'Video meeting', onClick: () => startMeetingNow('video') },
+            { label: selecting ? 'Cancel selection' : 'Select messages', onClick: toggleSelecting },
+            { label: 'Group settings', onClick: openEdit, hidden: !isOwner },
+            { label: 'Delete my messages', onClick: clearMessagesForMe, danger: true },
+          ]}
+        />
       </div>
 
       {searchOpen && (
@@ -622,7 +635,7 @@ export default function GroupChat() {
         <AttachButton onClick={() => fileInputRef.current.click()} uploading={uploading} />
         <input type="file" ref={fileInputRef} style={{ display: 'none' }} onChange={onFilePick} />
         <input value={text} onChange={onTextChange} placeholder="Message the group..." />
-        <button type="submit" className="send-btn"><SendIcon size={16} /> Send</button>
+        <button type="submit" className="send-btn" aria-label="Send"><SendIcon size={16} /> <span className="send-label">Send</span></button>
       </form>
 
       {seenFor && group && (() => {

@@ -1,5 +1,8 @@
-name: Zteam Desktop Release
+name: Zteam Release
 
+# One tag (e.g. v1.0.9) builds EVERYTHING and publishes ONE release:
+#   Windows installer + Linux AppImage/.deb + latest*.yml (desktop auto-update) + Android APK.
+# It never runs on a normal push to main, so it cannot affect the production deploy.
 on:
   push:
     tags:
@@ -62,3 +65,108 @@ jobs:
         run: npm run dist -- --linux
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  android:
+    name: Android APK
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: mobile
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Add Android platform
+        run: npx cap add android
+
+      - name: Grant camera / microphone permissions (calls and meetings)
+        run: |
+          python3 - <<'PY'
+          p = 'android/app/src/main/AndroidManifest.xml'
+          s = open(p).read()
+          perms = ''.join(
+              f'    <uses-permission android:name="android.permission.{n}" />\n'
+              for n in ['CAMERA', 'RECORD_AUDIO', 'MODIFY_AUDIO_SETTINGS', 'POST_NOTIFICATIONS']
+          )
+          s = s.replace('</manifest>', perms + '</manifest>')
+          open(p, 'w').write(s)
+          PY
+
+      # Same signing key on every release so a new APK installs OVER the old one.
+      - name: Use the permanent signing key
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_DEBUG_KEYSTORE_B64 }}
+        run: |
+          mkdir -p ~/.android
+          if [ -n "$KEYSTORE_B64" ]; then
+            echo "$KEYSTORE_B64" | base64 -d > ~/.android/debug.keystore
+          else
+            echo "::warning::ANDROID_DEBUG_KEYSTORE_B64 secret missing - APK gets a throw-away key"
+          fi
+
+      - name: Set app version from tag
+        run: |
+          NAME="${GITHUB_REF_NAME#v}"
+          sed -i "s/versionCode 1/versionCode ${GITHUB_RUN_NUMBER}/; s/versionName \"1.0\"/versionName \"${NAME}\"/" android/app/build.gradle
+
+      - name: Sync Capacitor
+        run: npx cap sync android
+
+      - name: Build APK
+        working-directory: mobile/android
+        run: ./gradlew assembleDebug --no-daemon
+
+      - name: Upload APK for the publish step
+        uses: actions/upload-artifact@v4
+        with:
+          name: Zteam-apk
+          path: mobile/android/app/build/outputs/apk/debug/app-debug.apk
+
+  # Runs only when Windows + Linux + Android all succeeded. electron-builder leaves the
+  # release as a DRAFT, and the desktop auto-updater cannot see drafts - so this step
+  # attaches the APK and then publishes the release (marks it Latest).
+  publish:
+    name: Attach APK and publish release
+    needs: [windows, linux, android]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download APK
+        uses: actions/download-artifact@v4
+        with:
+          name: Zteam-apk
+          path: apk
+
+      - name: Upload APK to the release and publish it
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          VER="${TAG#v}"
+          ID=$(gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=50" --jq ".[] | select(.tag_name==\"${TAG}\") | .id" | head -1)
+          if [ -z "$ID" ]; then echo "Release for ${TAG} not found"; exit 1; fi
+          cp apk/app-debug.apk "Zteam-${VER}.apk"
+          curl -sS -f -X POST \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Content-Type: application/vnd.android.package-archive" \
+            --data-binary "@Zteam-${VER}.apk" \
+            "https://uploads.github.com/repos/${GITHUB_REPOSITORY}/releases/${ID}/assets?name=Zteam-${VER}.apk"
+          gh api -X PATCH "repos/${GITHUB_REPOSITORY}/releases/${ID}" -F draft=false -f make_latest=true
