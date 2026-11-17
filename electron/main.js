@@ -176,7 +176,10 @@ app.whenReady().then(() => {
   if (!app.isPackaged) {
     console.log('Auto-update check skipped in development mode.');
   } else {
-    autoUpdater.checkForUpdatesAndNotify();
+    const checkForUpdates = () => autoUpdater.checkForUpdatesAndNotify().catch((err) => console.log('Update check failed:', err?.message));
+    checkForUpdates();
+    // Also re-check while the app stays open (it lives in the tray), so users get new versions without restarting.
+    setInterval(checkForUpdates, 60 * 60 * 1000);
   }
 
   app.on('activate', () => {
