@@ -786,3 +786,9 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 /* Meetings list: the menu button sits at the LEFT of its row on phones, so open the list rightwards */
 .meeting-actions-menu .chat-menu-list { right: auto; left: 0; }
+
+/* header placeholders while the name loads (instead of a flash of "Conversation") */
+.chat-avatar.skeleton { background: #e6ebf5; }
+.chat-skeleton-line { display: block; width: 140px; height: 14px; border-radius: 7px; background: #e6ebf5; animation: skeletonPulse 1.2s ease-in-out infinite; }
+@keyframes skeletonPulse { 50% { opacity: 0.5; } }
+@media (prefers-reduced-motion: reduce) { .chat-skeleton-line { animation: none; } }

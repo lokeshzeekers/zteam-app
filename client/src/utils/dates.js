@@ -10,14 +10,28 @@ function startOfDay(d) {
   return new Date(d.getFullYear(), d.getMonth(), d.getDate());
 }
 
-// "Today", "Yesterday", the weekday for the last week, otherwise a full date.
+const pad = (n) => String(n).padStart(2, '0');
+
+// Always day/month/year, e.g. 05/03/2026 (never month-first, whatever the browser locale).
+export function formatDate(value) {
+  const d = new Date(value);
+  return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()}`;
+}
+
+// 05/03/2026, 6:41 PM
+export function formatDateTime(value) {
+  const d = new Date(value);
+  return `${formatDate(d)}, ${d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`;
+}
+
+// "Today", "Yesterday", the weekday for the last week, otherwise day/month/year.
 export function dayLabel(value, now = new Date()) {
   const d = new Date(value);
   const diffDays = Math.round((startOfDay(now) - startOfDay(d)) / 86400000);
   if (diffDays === 0) return 'Today';
   if (diffDays === 1) return 'Yesterday';
   if (diffDays > 1 && diffDays < 7) return d.toLocaleDateString(undefined, { weekday: 'long' });
-  return d.toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' });
+  return formatDate(d);
 }
 
 // Walks a time-ordered list and returns it with a { kind: 'date' } marker inserted

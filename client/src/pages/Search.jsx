@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../api';
 import { usePresence } from '../context/PresenceContext';
+import { formatDate } from '../utils/dates';
 
 export default function Search() {
   const navigate = useNavigate();
@@ -87,7 +88,7 @@ export default function Search() {
                   <strong>{m.withUser.name}</strong>
                   <div className="muted small">{m.content}</div>
                 </div>
-                <span className="muted small">{new Date(m.createdAt).toLocaleDateString()}</span>
+                <span className="muted small">{formatDate(m.createdAt)}</span>
               </div>
             ))}
           </div>
@@ -104,7 +105,7 @@ export default function Search() {
                   <strong>{m.group.name}</strong>
                   <div className="muted small">{m.content}</div>
                 </div>
-                <span className="muted small">{new Date(m.createdAt).toLocaleDateString()}</span>
+                <span className="muted small">{formatDate(m.createdAt)}</span>
               </div>
             ))}
           </div>

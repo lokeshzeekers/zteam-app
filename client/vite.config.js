@@ -3,7 +3,11 @@ import react from '@vitejs/plugin-react';
 
 export default defineConfig({
   plugins: [react()],
-  base: './', // important so the built app also works loaded from file:// inside Electron
+  // Absolute by default: the website uses client-side routes like /chat/6, and a relative base
+  // ('./') makes a reload there request /chat/assets/... (served as HTML -> blank page).
+  // Electron loads the live site, so it does not need relative paths; for a file:// build use
+  //   npm run build:file
+  base: process.env.VITE_BASE || '/',
   server: {
     port: 5173,
     proxy: {

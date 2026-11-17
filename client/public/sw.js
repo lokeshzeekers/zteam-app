@@ -2,9 +2,12 @@
 // fetch handler before it will offer a real "Install app" option (as
 // opposed to the plain "Create shortcut" window, which has no manifest/SW
 // and therefore doesn't reliably support the Badging API). This one does no
-// caching — it just passes every request straight through to the network.
+// caching — it just passes every request straight through to the network
+// (and answers with a 503 instead of throwing when the network is down).
 self.addEventListener('install', () => self.skipWaiting());
 self.addEventListener('activate', (event) => event.waitUntil(self.clients.claim()));
 self.addEventListener('fetch', (event) => {
-  event.respondWith(fetch(event.request));
+  event.respondWith(
+    fetch(event.request).catch(() => new Response('Network unavailable', { status: 503, statusText: 'Service Unavailable' }))
+  );
 });

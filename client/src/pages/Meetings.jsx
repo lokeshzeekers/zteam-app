@@ -8,6 +8,7 @@ import Select from '../components/Select';
 import { TrashIcon, EditIcon } from '../components/ChatIcons';
 import ChatMenu from '../components/ChatMenu';
 import { confirmDialog } from '../dialogs';
+import { formatDateTime } from '../utils/dates';
 
 const CALL_TYPE_OPTIONS = [
   { value: 'video', label: 'Video' },
@@ -205,7 +206,7 @@ export default function Meetings() {
                 <strong>{m.title}</strong>
                 <span className={`status-pill ${live ? 'accepted' : 'pending'}`}>{live ? 'live now' : 'scheduled'}</span>
               </div>
-              <div className="muted small">{new Date(m.scheduledAt).toLocaleString()} · {m.durationMinutes} min · {m.callType === 'audio' ? 'audio' : 'video'} · host: {m.isOwner ? 'you' : m.hostName}</div>
+              <div className="muted small">{formatDateTime(m.scheduledAt)} · {m.durationMinutes} min · {m.callType === 'audio' ? 'audio' : 'video'} · host: {m.isOwner ? 'you' : m.hostName}</div>
               <div className="muted small">{m.participants.map((p) => p.name).join(', ')}</div>
             </div>
             <div className="request-actions">
@@ -247,7 +248,7 @@ export default function Meetings() {
             <div className="request-row" key={m.id}>
               <div>
                 <strong>{m.title}</strong> <span className="status-pill rejected">{m.status}</span>
-                <div className="muted small">{new Date(m.scheduledAt).toLocaleString()}</div>
+                <div className="muted small">{formatDateTime(m.scheduledAt)}</div>
               </div>
               <div className="request-actions">
                 <button
