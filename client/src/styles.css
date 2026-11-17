@@ -641,13 +641,22 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 @media (prefers-reduced-motion: reduce) { .msg.msg-flash { animation: none; outline: 2px solid var(--amber); } }
 
 /* ---------- Tablet + phone chat chrome (<= 1024px) ---------- */
-/* No Back button on touch-size screens (laptops / desktops keep it) */
+.chat-actions-menu { display: none; } /* must come BEFORE the media query that shows it */
+
+/* No Back button on tablet / phone (laptops and desktops keep it) */
 @media (max-width: 1024px) {
   .back-btn { display: none; }
-  .chat-actions-inline { display: none; }
+}
+/* Above 650px the chat header shows the icon row; at 650px and below it becomes the
+   WhatsApp-style three-dot menu (icon + text options). */
+@media (max-width: 650px) {
+  .chat-actions-inline { display: none !important; }
   .chat-actions-menu { display: block; }
 }
-.chat-actions-menu { display: none; }
+/* roomier icon row */
+.chat-header-actions { gap: 10px; flex-wrap: nowrap; }
+.chat-header-actions .icon-btn-sm { width: 38px; height: 38px; }
+.chat-header { gap: 14px; }
 
 /* WhatsApp-style three-dot menu with text options */
 .chat-menu { position: relative; flex-shrink: 0; }
@@ -657,15 +666,18 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 }
 .chat-menu-btn:hover:not(:disabled), .chat-menu-btn[aria-expanded="true"] { background: #eef2fa; border: none; color: var(--text); }
 .chat-menu-list {
-  position: absolute; top: calc(100% + 6px); right: 0; z-index: 50; min-width: 210px; max-width: calc(100vw - 24px);
+  position: absolute; top: calc(100% + 6px); right: 0; z-index: 50; min-width: 230px; max-width: calc(100vw - 24px);
   padding: 6px; background: #fff; border: 1px solid var(--border); border-radius: 12px;
   box-shadow: 0 10px 30px rgba(15, 31, 61, 0.2);
 }
 .chat-menu-list button {
-  display: block; width: 100%; padding: 12px 14px; border: none; border-radius: 8px; background: none;
+  display: flex; align-items: center; gap: 14px; width: 100%; padding: 12px 14px; border: none; border-radius: 8px; background: none;
   color: var(--text); font-size: 15px; font-weight: 500; text-align: left; white-space: nowrap;
 }
 .chat-menu-list button:hover:not(:disabled), .chat-menu-list button:active { background: #eef4ff; color: var(--accent-dark); border: none; }
+.chat-menu-list .chat-menu-icon { display: inline-flex; width: 22px; justify-content: center; color: var(--muted); flex-shrink: 0; }
+.chat-menu-list button:hover .chat-menu-icon { color: inherit; }
+.chat-menu-list button.danger .chat-menu-icon { color: var(--red); }
 .chat-menu-list button.active { color: var(--accent); font-weight: 600; }
 .chat-menu-list button.danger { color: var(--red); }
 .chat-menu-list button.danger:hover:not(:disabled) { background: #fef2f2; color: var(--red-dark); }
@@ -744,4 +756,12 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .search-form .primary-btn { width: 100%; }
   .chat-search-status { min-width: 0; }
   .jump-latest-btn { bottom: 70px; right: 10px; }
+}
+
+/* Meetings list: Edit / Delete become a three-dot menu on phones */
+.meeting-actions-menu { display: none; }
+@media (max-width: 650px) {
+  .meeting-actions-inline { display: none !important; }
+  .meeting-actions-menu { display: block; }
+  .request-actions { align-items: center; }
 }

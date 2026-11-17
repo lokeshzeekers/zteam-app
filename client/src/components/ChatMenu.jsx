@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 
 // WhatsApp-style "⋮" menu: a three-dot button that opens a list of TEXT options.
 // Used in the chat headers on phones and tablets (icon row is kept on desktop).
-// items: [{ label, onClick, danger?, active?, hidden? }]
+// items: [{ label, icon?, onClick, danger?, active?, hidden? }]
 export default function ChatMenu({ items, className = '' }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
@@ -43,7 +43,8 @@ export default function ChatMenu({ items, className = '' }) {
               className={`${i.danger ? 'danger' : ''}${i.active ? ' active' : ''}`}
               onClick={() => { setOpen(false); i.onClick(); }}
             >
-              {i.label}
+              {i.icon && <span className="chat-menu-icon" aria-hidden="true">{i.icon}</span>}
+              <span>{i.label}</span>
             </button>
           ))}
         </div>

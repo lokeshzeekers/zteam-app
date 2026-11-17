@@ -509,13 +509,13 @@ export default function GroupChat() {
         <ChatMenu
           className="chat-actions-menu"
           items={[
-            { label: `Members (${group?.members.length || 0})`, onClick: () => setShowMembers((v) => !v), active: showMembers },
-            { label: searchOpen ? 'Close search' : 'Search', onClick: () => (searchOpen ? closeSearch() : setSearchOpen(true)) },
-            { label: 'Voice meeting', onClick: () => startMeetingNow('audio') },
-            { label: 'Video meeting', onClick: () => startMeetingNow('video') },
-            { label: selecting ? 'Cancel selection' : 'Select messages', onClick: toggleSelecting },
-            { label: 'Group settings', onClick: openEdit, hidden: !isOwner },
-            { label: 'Delete my messages', onClick: clearMessagesForMe, danger: true },
+            { label: `Members (${group?.members.length || 0})`, icon: <UsersIcon size={19} />, onClick: () => setShowMembers((v) => !v), active: showMembers },
+            { label: searchOpen ? 'Close search' : 'Search', icon: <SearchIcon size={19} />, onClick: () => (searchOpen ? closeSearch() : setSearchOpen(true)) },
+            { label: 'Voice meeting', icon: <PhoneIcon size={19} />, onClick: () => startMeetingNow('audio') },
+            { label: 'Video meeting', icon: <VideoIcon size={19} />, onClick: () => startMeetingNow('video') },
+            { label: selecting ? 'Cancel selection' : 'Select messages', icon: <CheckSquareIcon size={19} />, onClick: toggleSelecting },
+            { label: 'Group settings', icon: <SettingsIcon size={19} />, onClick: openEdit, hidden: !isOwner },
+            { label: 'Delete my messages', icon: <TrashIcon size={19} />, onClick: clearMessagesForMe, danger: true },
           ]}
         />
       </div>

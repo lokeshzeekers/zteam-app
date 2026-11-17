@@ -379,11 +379,11 @@ export default function ChatWindow({ onStartCall }) {
         <ChatMenu
           className="chat-actions-menu"
           items={[
-            { label: searchOpen ? 'Close search' : 'Search', onClick: () => (searchOpen ? closeSearch() : setSearchOpen(true)) },
-            { label: 'Voice call', onClick: () => onStartCall?.(Number(userId), 'audio') },
-            { label: 'Video call', onClick: () => onStartCall?.(Number(userId), 'video') },
-            { label: selecting ? 'Cancel selection' : 'Select messages', onClick: toggleSelecting },
-            { label: 'Delete conversation', onClick: deleteConversation, danger: true },
+            { label: searchOpen ? 'Close search' : 'Search', icon: <SearchIcon size={19} />, onClick: () => (searchOpen ? closeSearch() : setSearchOpen(true)) },
+            { label: 'Voice call', icon: <PhoneIcon size={19} />, onClick: () => onStartCall?.(Number(userId), 'audio') },
+            { label: 'Video call', icon: <VideoIcon size={19} />, onClick: () => onStartCall?.(Number(userId), 'video') },
+            { label: selecting ? 'Cancel selection' : 'Select messages', icon: <CheckSquareIcon size={19} />, onClick: toggleSelecting },
+            { label: 'Delete conversation', icon: <TrashIcon size={19} />, onClick: deleteConversation, danger: true },
           ]}
         />
       </div>
