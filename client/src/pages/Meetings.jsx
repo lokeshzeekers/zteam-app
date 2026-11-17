@@ -5,7 +5,8 @@ import { useAuth } from '../context/AuthContext';
 import { getSocket } from '../socket';
 import { useNotificationCenter } from '../context/NotificationCenterContext';
 import Select from '../components/Select';
-import { TrashIcon } from '../components/ChatIcons';
+import { TrashIcon, EditIcon } from '../components/ChatIcons';
+import ChatMenu from '../components/ChatMenu';
 import { confirmDialog } from '../dialogs';
 
 const CALL_TYPE_OPTIONS = [
@@ -219,8 +220,21 @@ export default function Meetings() {
               {live && m.isOwner && (
                 <button type="button" className="btn-outline-danger" disabled={busy} onClick={() => endMeeting(m.id)}>End</button>
               )}
-              {m.isOwner && <button type="button" className="btn-secondary" disabled={busy} onClick={() => openEdit(m)}>Edit</button>}
-              {m.isOwner && <button type="button" className="btn-danger" disabled={busy} onClick={() => cancelMeeting(m.id)}>Delete</button>}
+              {m.isOwner && (
+                <>
+                  <span className="meeting-actions-inline" style={{ display: 'contents' }}>
+                    <button type="button" className="btn-secondary" disabled={busy} onClick={() => openEdit(m)}>Edit</button>
+                    <button type="button" className="btn-danger" disabled={busy} onClick={() => cancelMeeting(m.id)}>Delete</button>
+                  </span>
+                  <ChatMenu
+                    className="meeting-actions-menu"
+                    items={[
+                      { label: 'Edit meeting', icon: <EditIcon size={19} />, onClick: () => openEdit(m) },
+                      { label: 'Delete meeting', icon: <TrashIcon size={19} />, onClick: () => cancelMeeting(m.id), danger: true },
+                    ]}
+                  />
+                </>
+              )}
             </div>
           </div>
         );

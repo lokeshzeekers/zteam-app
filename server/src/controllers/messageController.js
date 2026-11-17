@@ -39,6 +39,9 @@ async function getConversation(req, res) {
   const allowed = await canCommunicate(me, other);
   if (!allowed) return res.status(403).json({ error: 'Not connected with this user yet' });
 
+  // Who this chat is with (additive field) so the header can show a name instead of "Conversation".
+  const peer = { id: other.id, name: other.name, position: other.position || null, isActive: isPresent(other) };
+
   // Same per-user clear as the inbox (see listInbox): messages from at/before my own
   // clear point are hidden from ME ONLY. Enforced here, server-side, so every entry
   // point that opens this conversation - Recent Chats, Department -> person, Inbox -
@@ -68,7 +71,7 @@ async function getConversation(req, res) {
       const reachesNewest = windowRows.length <= AROUND_MAX;
       const rows = windowRows.slice(0, AROUND_MAX);
       if (reachesNewest) await markIncomingRead(req, me.id, otherId);
-      return res.json({ messages: rows.map(toClient), hasMore: hasMoreOlder, reachesNewest });
+      return res.json({ messages: rows.map(toClient), hasMore: hasMoreOlder, reachesNewest, peer });
     }
   }
 
@@ -101,7 +104,7 @@ async function getConversation(req, res) {
     }
   }
 
-  res.json({ messages: messages.map(toClient), hasMore });
+  res.json({ messages: messages.map(toClient), hasMore, peer });
 }
 
 // Explicit "I'm looking at this chat right now" — marks everything the other

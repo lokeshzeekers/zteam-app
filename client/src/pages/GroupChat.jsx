@@ -10,6 +10,7 @@ import BackButton from '../components/BackButton';
 import MessageMenu from '../components/MessageMenu';
 import ChatMenu from '../components/ChatMenu';
 import DateSeparator from '../components/DateSeparator';
+import ScrollToBottomButton from '../components/ScrollToBottomButton';
 import ChatSearchBar from '../components/ChatSearchBar';
 import Highlight from '../components/Highlight';
 import useChatJump from '../hooks/useChatJump';
@@ -90,6 +91,12 @@ export default function GroupChat() {
   const [searchTerm, setSearchTerm] = useState('');
   const [currentMatchId, setCurrentMatchId] = useState(null);
   const bottomRef = useRef(null);
+  const bodyRef = useRef(null);
+  const [showScrollBtn, setShowScrollBtn] = useState(false);
+  const onBodyScroll = (e) => {
+    const el = e.currentTarget;
+    setShowScrollBtn(el.scrollHeight - el.scrollTop - el.clientHeight > 240);
+  };
   const fileInputRef = useRef(null);
   const typingTimeoutRef = useRef(null);
   const lastTypingEmitRef = useRef(0);
@@ -460,7 +467,11 @@ export default function GroupChat() {
       <div className="chat-header">
         <div className="chat-header-left">
           <BackButton fallback="/groups" />
-          <strong>{group?.name || 'Group'}</strong>
+          <span className="chat-avatar" aria-hidden="true">{(group?.name || 'G').charAt(0).toUpperCase()}</span>
+          <div className="chat-title">
+            <strong>{group?.name || 'Group'}</strong>
+            <span className="chat-subtitle">{group?.members?.length || 0} members</span>
+          </div>
         </div>
         <div className="chat-header-actions chat-actions-inline">
           <button
@@ -509,13 +520,13 @@ export default function GroupChat() {
         <ChatMenu
           className="chat-actions-menu"
           items={[
-            { label: `Members (${group?.members.length || 0})`, onClick: () => setShowMembers((v) => !v), active: showMembers },
-            { label: searchOpen ? 'Close search' : 'Search', onClick: () => (searchOpen ? closeSearch() : setSearchOpen(true)) },
-            { label: 'Voice meeting', onClick: () => startMeetingNow('audio') },
-            { label: 'Video meeting', onClick: () => startMeetingNow('video') },
-            { label: selecting ? 'Cancel selection' : 'Select messages', onClick: toggleSelecting },
-            { label: 'Group settings', onClick: openEdit, hidden: !isOwner },
-            { label: 'Delete my messages', onClick: clearMessagesForMe, danger: true },
+            { label: `Members (${group?.members.length || 0})`, icon: <UsersIcon size={19} />, onClick: () => setShowMembers((v) => !v), active: showMembers },
+            { label: searchOpen ? 'Close search' : 'Search', icon: <SearchIcon size={19} />, onClick: () => (searchOpen ? closeSearch() : setSearchOpen(true)) },
+            { label: 'Voice meeting', icon: <PhoneIcon size={19} />, onClick: () => startMeetingNow('audio') },
+            { label: 'Video meeting', icon: <VideoIcon size={19} />, onClick: () => startMeetingNow('video') },
+            { label: selecting ? 'Cancel selection' : 'Select messages', icon: <CheckSquareIcon size={19} />, onClick: toggleSelecting },
+            { label: 'Group settings', icon: <SettingsIcon size={19} />, onClick: openEdit, hidden: !isOwner },
+            { label: 'Delete my messages', icon: <TrashIcon size={19} />, onClick: clearMessagesForMe, danger: true },
           ]}
         />
       </div>
@@ -546,7 +557,7 @@ export default function GroupChat() {
         </div>
       )}
 
-      <div className="chat-body">
+      <div className="chat-body" ref={bodyRef} onScroll={onBodyScroll}>
         {error && <div className="auth-error">{error}</div>}
         {hasMore && (
           <button type="button" className="load-older-btn" onClick={loadOlder} disabled={loadingOlder}>
@@ -627,9 +638,13 @@ export default function GroupChat() {
         )}
         <div ref={bottomRef} />
       </div>
-      {jump.detached && (
-        <button type="button" className="jump-latest-btn" onClick={backToLatest}>Jump to latest ↓</button>
-      )}
+      <ScrollToBottomButton
+        visible={showScrollBtn || jump.detached}
+        onClick={() => {
+          if (jump.detached) backToLatest();
+          else bodyRef.current?.scrollTo({ top: bodyRef.current.scrollHeight, behavior: 'smooth' });
+        }}
+      />
       {notice && <div className="chat-notice" role="alert">{notice}</div>}
       <form className="chat-input" onSubmit={send}>
         <AttachButton onClick={() => fileInputRef.current.click()} uploading={uploading} />
