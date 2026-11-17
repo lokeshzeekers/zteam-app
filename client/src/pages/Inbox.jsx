@@ -7,6 +7,7 @@ import { usePresence } from '../context/PresenceContext';
 import { useNotificationCenter } from '../context/NotificationCenterContext';
 import { FileIcon, TrashIcon } from '../components/ChatIcons';
 import { confirmDialog, alertDialog } from '../dialogs';
+import { formatDateTime } from '../utils/dates';
 
 export default function Inbox() {
   const [threads, setThreads] = useState([]);
@@ -80,7 +81,7 @@ export default function Inbox() {
             <div className="thread-row-body">
               <div className="thread-row-top">
                 <strong>{t.user.name}</strong>
-                <span className="muted small">{new Date(t.lastMessage.createdAt).toLocaleString()}</span>
+                <span className="muted small">{formatDateTime(t.lastMessage.createdAt)}</span>
               </div>
               <div className="muted thread-preview">
                 {t.lastMessage.deletedAt

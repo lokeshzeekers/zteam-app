@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import api from '../api';
 import { getSocket } from '../socket';
@@ -55,6 +55,9 @@ function GroupReceipt({ message, members, reads, myId }) {
   return <span className="receipt" title="Sent"><CheckIcon size={12} /></span>;
 }
 
+// Remembers each group's name/size so re-opening a group shows the header instantly.
+const groupHeadCache = new Map();
+
 export default function GroupChat() {
   const { groupId } = useParams();
   const { user } = useAuth();
@@ -62,6 +65,7 @@ export default function GroupChat() {
   const { isUserActive } = usePresence();
   const navigate = useNavigate();
   const [group, setGroup] = useState(null);
+  const instantUntil = useRef(0); // scrolls before this time jump instantly (opening a chat) instead of animating
   const [reads, setReads] = useState({}); // userId -> lastReadAt
   const [messages, setMessages] = useState([]);
   const [calls, setCalls] = useState([]);
@@ -102,6 +106,15 @@ export default function GroupChat() {
   const lastTypingEmitRef = useRef(0);
   const typingClearTimersRef = useRef({});
 
+  // Header text: only trust `group` if it is THIS group (state can briefly hold the previous one).
+  const curGroup = group && String(group.id) === String(groupId) ? group : null;
+  const cachedHead = groupHeadCache.get(Number(groupId));
+  const headName = curGroup?.name ?? cachedHead?.name;
+  const headCount = curGroup ? (curGroup.members?.length || 0) : cachedHead?.count;
+  useEffect(() => {
+    if (curGroup) groupHeadCache.set(Number(groupId), { name: curGroup.name, count: curGroup.members?.length || 0 });
+  }, [curGroup, groupId]);
+
   function loadGroup() {
     return api.get(`/api/groups/${groupId}`).then((r) => { setGroup(r.data.group); setReads(r.data.reads || {}); });
   }
@@ -121,6 +134,7 @@ export default function GroupChat() {
     return req
       .then((data) => {
         if (around) { applyWindow(around, data); return; }
+        instantUntil.current = Date.now() + 1500;
         setMessages(data.messages); setHasMore(data.hasMore); clearDetached();
       })
       .catch(() => {});
@@ -262,10 +276,18 @@ export default function GroupChat() {
     };
   }, [groupId, loadFirstPage, markGroupRead, user.id]);
 
-  useEffect(() => {
+  // Layout effect = scroll before paint, so opening a chat lands on the newest message with no
+  // visible scroll-down animation. Only NEW messages after that animate.
+  useLayoutEffect(() => {
     if (jump.pendingRef.current) return; // a jump-to-message is about to scroll; don't fight it
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+    bottomRef.current?.scrollIntoView({ behavior: Date.now() < instantUntil.current ? 'auto' : 'smooth' });
   }, [messages, calls]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Right after opening, late-arriving content (read receipts, header) can grow the list a little;
+  // keep the view pinned to the newest message during that short window only.
+  useLayoutEffect(() => {
+    if (Date.now() < instantUntil.current && !jump.pendingRef.current) bottomRef.current?.scrollIntoView({ behavior: 'auto' });
+  }, [reads, group]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // After a jump window renders, scroll to the target message.
   useEffect(() => { jump.afterRender(); }, [messages]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -467,10 +489,16 @@ export default function GroupChat() {
       <div className="chat-header">
         <div className="chat-header-left">
           <BackButton fallback="/groups" />
-          <span className="chat-avatar" aria-hidden="true">{(group?.name || 'G').charAt(0).toUpperCase()}</span>
+          <span className={`chat-avatar${headName ? '' : ' skeleton'}`} aria-hidden="true">{headName ? headName.charAt(0).toUpperCase() : ''}</span>
           <div className="chat-title">
-            <strong>{group?.name || 'Group'}</strong>
-            <span className="chat-subtitle">{group?.members?.length || 0} members</span>
+            {headName ? (
+              <>
+                <strong>{headName}</strong>
+                {headCount != null && <span className="chat-subtitle">{headCount} members</span>}
+              </>
+            ) : (
+              <span className="chat-skeleton-line" role="status" aria-label="Loading chat" />
+            )}
           </div>
         </div>
         <div className="chat-header-actions chat-actions-inline">

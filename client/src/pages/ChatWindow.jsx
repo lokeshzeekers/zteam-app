@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import api from '../api';
 import { getSocket } from '../socket';
@@ -49,6 +49,9 @@ function ReadReceipt({ message }) {
 
 const TYPING_STOP_DELAY = 2500;
 
+// Remembers who each chat is with, so re-opening a chat shows the name instantly.
+const peerCache = new Map();
+
 export default function ChatWindow({ onStartCall }) {
   const { userId } = useParams();
   const { user } = useAuth();
@@ -57,7 +60,8 @@ export default function ChatWindow({ onStartCall }) {
   const [messages, setMessages] = useState([]);
   const [calls, setCalls] = useState([]);
   const [hasMore, setHasMore] = useState(false);
-  const [peer, setPeer] = useState(null); // who this chat is with (name for the header)
+  const [peer, setPeer] = useState(() => peerCache.get(Number(userId)) || null); // who this chat is with (header)
+  const instantUntil = useRef(0); // scrolls before this time jump instantly (opening a chat) instead of animating
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [text, setText] = useState('');
   const [error, setError] = useState('');
@@ -99,8 +103,9 @@ export default function ChatWindow({ onStartCall }) {
     const req = around ? fetchAround(around) : api.get(`/api/messages/with/${userId}`).then((r) => r.data);
     return req
       .then((data) => {
-        if (data.peer) setPeer(data.peer);
+        if (data.peer) { peerCache.set(Number(userId), data.peer); setPeer(data.peer); }
         if (around) { applyWindow(around, data); return; }
+        instantUntil.current = Date.now() + 1500;
         setMessages(data.messages); setHasMore(data.hasMore); clearDetached();
       })
       .catch((err) => setError(err?.response?.data?.error || 'Cannot load conversation'));
@@ -203,9 +208,11 @@ export default function ChatWindow({ onStartCall }) {
     };
   }, [userId, loadFirstPage, markDMRead, user.id]);
 
-  useEffect(() => {
+  // Layout effect = scroll before paint, so opening a chat lands on the newest message with no
+  // visible scroll-down animation. Only NEW messages after that animate.
+  useLayoutEffect(() => {
     if (jump.pendingRef.current) return; // a jump-to-message is about to scroll; don't fight it
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+    bottomRef.current?.scrollIntoView({ behavior: Date.now() < instantUntil.current ? 'auto' : 'smooth' });
   }, [messages.length, calls.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // After a jump window renders, scroll to the target message.
@@ -342,10 +349,16 @@ export default function ChatWindow({ onStartCall }) {
       <div className="chat-header">
         <div className="chat-header-left">
           <BackButton fallback="/" />
-          <span className="chat-avatar" aria-hidden="true">{(peer?.name || '?').charAt(0).toUpperCase()}</span>
+          <span className={`chat-avatar${peer ? '' : ' skeleton'}`} aria-hidden="true">{peer ? peer.name.charAt(0).toUpperCase() : ''}</span>
           <div className="chat-title">
-            <strong>{peer?.name || 'Conversation'}</strong>
-            {peer?.position && <span className="chat-subtitle">{peer.position}{peer.isActive ? ' · Active' : ''}</span>}
+            {peer ? (
+              <>
+                <strong>{peer.name}</strong>
+                {peer.position && <span className="chat-subtitle">{peer.position}{peer.isActive ? ' · Active' : ''}</span>}
+              </>
+            ) : (
+              <span className="chat-skeleton-line" role="status" aria-label="Loading chat" />
+            )}
           </div>
         </div>
         <div className="chat-header-actions chat-actions-inline">
