@@ -12,6 +12,7 @@ import FileAttachment from '../components/FileAttachment';
 import MessageMenu from '../components/MessageMenu';
 import ChatMenu from '../components/ChatMenu';
 import DateSeparator from '../components/DateSeparator';
+import ScrollToBottomButton from '../components/ScrollToBottomButton';
 import ChatSearchBar from '../components/ChatSearchBar';
 import Highlight from '../components/Highlight';
 import useChatJump from '../hooks/useChatJump';
@@ -56,6 +57,7 @@ export default function ChatWindow({ onStartCall }) {
   const [messages, setMessages] = useState([]);
   const [calls, setCalls] = useState([]);
   const [hasMore, setHasMore] = useState(false);
+  const [peer, setPeer] = useState(null); // who this chat is with (name for the header)
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [text, setText] = useState('');
   const [error, setError] = useState('');
@@ -70,6 +72,12 @@ export default function ChatWindow({ onStartCall }) {
   const [searchTerm, setSearchTerm] = useState('');
   const [currentMatchId, setCurrentMatchId] = useState(null);
   const bottomRef = useRef(null);
+  const bodyRef = useRef(null);
+  const [showScrollBtn, setShowScrollBtn] = useState(false);
+  const onBodyScroll = (e) => {
+    const el = e.currentTarget;
+    setShowScrollBtn(el.scrollHeight - el.scrollTop - el.clientHeight > 240);
+  };
   const fileInputRef = useRef(null);
   const typingTimeoutRef = useRef(null);
   const lastTypingEmitRef = useRef(0);
@@ -91,6 +99,7 @@ export default function ChatWindow({ onStartCall }) {
     const req = around ? fetchAround(around) : api.get(`/api/messages/with/${userId}`).then((r) => r.data);
     return req
       .then((data) => {
+        if (data.peer) setPeer(data.peer);
         if (around) { applyWindow(around, data); return; }
         setMessages(data.messages); setHasMore(data.hasMore); clearDetached();
       })
@@ -333,7 +342,11 @@ export default function ChatWindow({ onStartCall }) {
       <div className="chat-header">
         <div className="chat-header-left">
           <BackButton fallback="/" />
-          <strong>Conversation</strong>
+          <span className="chat-avatar" aria-hidden="true">{(peer?.name || '?').charAt(0).toUpperCase()}</span>
+          <div className="chat-title">
+            <strong>{peer?.name || 'Conversation'}</strong>
+            {peer?.position && <span className="chat-subtitle">{peer.position}{peer.isActive ? ' · Active' : ''}</span>}
+          </div>
         </div>
         <div className="chat-header-actions chat-actions-inline">
           <button
@@ -401,7 +414,7 @@ export default function ChatWindow({ onStartCall }) {
         </div>
       )}
 
-      <div className="chat-body">
+      <div className="chat-body" ref={bodyRef} onScroll={onBodyScroll}>
         {hasMore && (
           <button type="button" className="load-older-btn" onClick={loadOlder} disabled={loadingOlder}>
             {loadingOlder ? 'Loading…' : 'Load older messages'}
@@ -468,9 +481,13 @@ export default function ChatWindow({ onStartCall }) {
         )}
         <div ref={bottomRef} />
       </div>
-      {jump.detached && (
-        <button type="button" className="jump-latest-btn" onClick={backToLatest}>Jump to latest ↓</button>
-      )}
+      <ScrollToBottomButton
+        visible={showScrollBtn || jump.detached}
+        onClick={() => {
+          if (jump.detached) backToLatest();
+          else bodyRef.current?.scrollTo({ top: bodyRef.current.scrollHeight, behavior: 'smooth' });
+        }}
+      />
       {notice && <div className="chat-notice" role="alert">{notice}</div>}
       <form className="chat-input" onSubmit={send}>
         <AttachButton onClick={() => fileInputRef.current.click()} uploading={uploading} />
