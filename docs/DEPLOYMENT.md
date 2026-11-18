@@ -7,7 +7,7 @@ without a new installer.
 
 ```
  push to main ──► GitHub Actions "Deploy Zteam to VPS"
-                    git pull → npm ci → vite build → copy dist to /var/www/zteam
+                    git pull → npm ci → vite build → scripts/publish-client.sh dist → /var/www/zteam
                     (old /assets kept 14 days) → pm2 restart zteam-server → /api/health
 
  Windows EXE  (electron/main.js)  ──loadURL──►  https://zteam.zeekerstech.com  ◄──  Android APK (Capacitor server.url)
@@ -59,6 +59,32 @@ scripts/verify-deployment.sh https://zteam.zeekerstech.com
 (checks entry-file cache headers, version.json, asset paths/MIME types, deep-link reload, `/api/health`).
 Run it after every nginx change and whenever a "blank page after reload" is reported.
 
+## Publishing the client (`scripts/publish-client.sh <dist> <web-root> [days=14]`)
+
+The web root is **never bulk-deleted**. The deploy used to run `rm -rf /var/www/zteam/*` before copying,
+which removed every previous asset (and anything else in that directory). The script replaces it:
+
+1. **Pre-flight, before the web root is touched:** `index.html`, `version.json` (with a build id) and
+   non-empty `assets/` exist; `index.html` is complete, uses absolute `/assets/...` paths and references
+   only files that are in the build. The web root must be an absolute path at least three levels deep.
+2. **Assets are additive:** new fingerprinted files are copied in; identical files are left untouched
+   (never rewritten, so no truncation window); every asset of the current build gets a fresh timestamp.
+3. **Switch order:** assets → other static files → `sw.js`, `manifest.json` → `index.html` →
+   `version.json` last. Every file is written to a temp file and renamed into place (atomic). A visitor
+   never gets an `index.html` whose assets are missing.
+4. **Verify and roll back:** afterwards every entry file must match the build and every asset referenced
+   by the live `index.html` must exist. On any failure, or on SIGINT/SIGTERM/SIGHUP (e.g. a cancelled
+   deploy run), `index.html`, `version.json`, `sw.js`, `manifest.json` and any replaced static file are
+   restored. A failing publish stops the deploy before the backend restart, so site and API stay consistent.
+5. **Retention:** only files inside `assets/` that are (a) older than 14 days since they were last part of
+   a build, (b) not referenced by the current build and (c) fingerprinted (`name-HASH.ext`) are removed.
+   Dotfiles, symlinks, non-fingerprinted files and everything outside `assets/` are never deleted.
+6. **Out of scope by design:** API, Socket.IO and uploaded files (`UPLOAD_DIR`, served by Express) are not
+   part of the web root and are never touched; even if `UPLOAD_DIR` were placed inside the web root, the
+   script cannot delete it.
+
+Run `scripts/test-publish-client.sh` (68 checks; also a CI job, together with ShellCheck) after any change.
+
 ## Rules that keep old installed apps working
 
 1. **Never load the web app from inside the installer.** `electron/client-dist` was removed; the
@@ -71,7 +97,7 @@ Run it after every nginx change and whenever a "blank page after reload" is repo
 4. The website must use **absolute asset paths** (`base: '/'` in `client/vite.config.js`); relative
    paths make a reload on `/chat/6` request `/chat/assets/...` and show a blank page.
 5. The deploy keeps the previous build's `/assets` for 14 days so a not-yet-refreshed page does not
-   point at deleted files.
+   point at deleted files (see "Publishing the client").
 
 ## Known limitations
 
@@ -115,3 +141,13 @@ Reopening after a deployment (persistent profile, app launches at `/`; a control
 
 Not covered: a physical Windows/Android device, OS-level notification toasts, Windows taskbar
 flash/badge, the NSIS auto-updater, and a real two-party call.
+
+**Publish script (68 checks, `scripts/test-publish-client.sh`):** first and repeated deployments; old assets
+kept byte-identical; unchanged assets not rewritten; uploads, dotfiles, symlinks and unrelated files
+unchanged; retention (expired/unreferenced removed, 13-day-old and referenced kept, configurable); 7
+broken builds and 11 unsafe web roots refused with the web root unchanged; injected failures while
+copying an asset, `sw.js`, `index.html` and `version.json` (after `index.html` was switched), a first-ever
+deployment, and SIGTERM/SIGHUP mid-publish all leave either the complete old or the complete new site and no
+temp files; a reader polling the live site 600+ times during an 801-file publish saw zero broken states.
+The same suite run against the old logic fails 28 checks (the `rm -rf` version on `main`) and 19 checks
+(the first version of this PR), so the tests do detect the problems they target.

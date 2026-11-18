@@ -45,13 +45,13 @@ jobs:
             npm run build
 
             echo "=== Publishing client ==="
-            # Overwrite index.html / version.json / manifest / sw.js with the new build, but KEEP the
-            # previous builds' /assets for 14 days. An installed app or open tab that still holds the
-            # previous index.html then keeps working (instead of a blank page from deleted files) until
-            # its next refresh or its automatic update check (see client UpdateBanner).
-            mkdir -p /var/www/zteam/assets
-            cp -a /home/zteam/apps/zteam-app/client/dist/. /var/www/zteam/
-            find /var/www/zteam/assets -type f -mtime +14 -delete
+            # scripts/publish-client.sh (tested by scripts/test-publish-client.sh in CI):
+            #  - never bulk-deletes the web root (uploads and anything else in it are untouched)
+            #  - copies new fingerprinted assets without removing existing ones; assets that are no longer
+            #    referenced are removed only after 14 days
+            #  - atomic writes, index.html + version.json switched last, automatic rollback on any failure
+            #  - a failure stops the deploy HERE (set -e), before the backend restart, so API and site stay consistent
+            bash /home/zteam/apps/zteam-app/scripts/publish-client.sh /home/zteam/apps/zteam-app/client/dist /var/www/zteam 14
 
             echo "=== Restarting backend ==="
             pm2 restart zteam-server --update-env
