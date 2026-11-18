@@ -1,8 +1,21 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
+// Build fingerprint. Every deployment gets a new id; it is baked into the JS bundle AND published
+// as /version.json, so an app that is already open (Electron / Android WebView / browser tab) can
+// notice that the server now has a newer build (see src/components/UpdateBanner.jsx).
+const BUILD_ID = `${(process.env.GITHUB_SHA || '').slice(0, 7) || 'local'}-${Date.now().toString(36)}`;
+const versionFile = () => ({
+  name: 'zteam-version-file',
+  apply: 'build',
+  generateBundle() {
+    this.emitFile({ type: 'asset', fileName: 'version.json', source: JSON.stringify({ build: BUILD_ID }) });
+  },
+});
+
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), versionFile()],
+  define: { __BUILD_ID__: JSON.stringify(BUILD_ID) },
   // Absolute by default: the website uses client-side routes like /chat/6, and a relative base
   // ('./') makes a reload there request /chat/assets/... (served as HTML -> blank page).
   // Electron loads the live site, so it does not need relative paths; for a file:// build use

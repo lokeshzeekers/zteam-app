@@ -33,10 +33,11 @@ app.on('second-instance', () => {
   else showMainWindow();
 });
 
-// Point the bundled desktop client at your production server.
-// Set this to your Hostinger VPS domain, e.g. https://zteam.yourdomain.com
-// (The web build embeds this at build-time via VITE_API_URL; this is a fallback
-// for loading the local client-dist folder if you prefer bundling the UI too.)
+// The desktop app is only a native shell around the LIVE website: the UI, frontend and backend all
+// come from this URL, so every website deployment reaches installed apps without a new installer.
+// (No copy of the web app is bundled. Only this file, preload.js and the assets/ icons ship in the EXE.)
+// Keep window.zteamDesktop in preload.js backward compatible: installed apps keep the preload they
+// were built with, while the website they load keeps changing.
 const START_URL = process.env.ZTEAM_APP_URL || 'https://zteam.zeekerstech.com';
 
 // ---- Taskbar flashing --------------------------------------------------------

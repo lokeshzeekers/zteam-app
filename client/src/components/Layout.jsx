@@ -3,6 +3,7 @@ import { Outlet, useLocation, useParams } from 'react-router-dom';
 import Sidebar from './Sidebar';
 import CallManager from './CallManager';
 import NotificationPrompt from './NotificationPrompt';
+import UpdateBanner from './UpdateBanner';
 import BrandMark from './BrandMark';
 import ChatWindow from '../pages/ChatWindow';
 import { useNotificationCenter } from '../context/NotificationCenterContext';
@@ -25,6 +26,7 @@ export default function Layout() {
 
   return (
     <div className={`app-shell${navOpen ? ' nav-open' : ''}`}>
+      <UpdateBanner />
       <header className="mobile-topbar">
         <div className="topbar-brand">
           <BrandMark size={26} />

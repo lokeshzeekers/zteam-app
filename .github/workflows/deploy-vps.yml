@@ -7,7 +7,9 @@ on:
 
 concurrency:
   group: zteam-production
-  cancel-in-progress: true
+  # Never cancel a deploy that is already running (it could be between publishing the site and
+  # restarting the API). A newer push waits in the queue and deploys right after.
+  cancel-in-progress: false
 
 jobs:
   deploy:
@@ -45,8 +47,13 @@ jobs:
             npm run build
 
             echo "=== Publishing client ==="
-            rm -rf /var/www/zteam/*
-            cp -a /home/zteam/apps/zteam-app/client/dist/. /var/www/zteam/
+            # scripts/publish-client.sh (tested by scripts/test-publish-client.sh in CI):
+            #  - never bulk-deletes the web root (uploads and anything else in it are untouched)
+            #  - copies new fingerprinted assets without removing existing ones; assets that are no longer
+            #    referenced are removed only after 14 days
+            #  - atomic writes, index.html + version.json switched last, automatic rollback on any failure
+            #  - a failure stops the deploy HERE (set -e), before the backend restart, so API and site stay consistent
+            bash /home/zteam/apps/zteam-app/scripts/publish-client.sh /home/zteam/apps/zteam-app/client/dist /var/www/zteam 14
 
             echo "=== Restarting backend ==="
             pm2 restart zteam-server --update-env

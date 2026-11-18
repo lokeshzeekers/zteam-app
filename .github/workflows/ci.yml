@@ -77,3 +77,17 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+  deploy-script:
+    name: Deploy Script Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Lint deployment scripts
+        run: shellcheck -S warning scripts/publish-client.sh scripts/test-publish-client.sh scripts/verify-deployment.sh
+
+      - name: Test publish-client.sh (retention, atomicity, rollback, safety)
+        run: bash scripts/test-publish-client.sh
