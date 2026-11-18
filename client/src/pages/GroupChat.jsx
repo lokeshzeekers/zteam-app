@@ -781,7 +781,7 @@ export default function GroupChat() {
                     />
                     <div className="edit-modal-actions">
                       <button type="button" className="btn-secondary" onClick={() => { setConfirmingDelete(false); setDeleteConfirmText(''); }}>Cancel</button>
-                      <button type="button" className="btn-danger" disabled={deleteConfirmText.trim() !== group.name} onClick={deleteGroup}>Delete group permanently</button>
+                      <button type="button" className="btn-danger" disabled={deleteConfirmText.trim() !== (group.name || '').trim()} onClick={deleteGroup}>Delete group permanently</button>
                     </div>
                   </>
                 )}
