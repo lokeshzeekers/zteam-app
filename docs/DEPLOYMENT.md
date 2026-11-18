@@ -145,9 +145,9 @@ flash/badge, the NSIS auto-updater, and a real two-party call.
 **Publish script (68 checks, `scripts/test-publish-client.sh`):** first and repeated deployments; old assets
 kept byte-identical; unchanged assets not rewritten; uploads, dotfiles, symlinks and unrelated files
 unchanged; retention (expired/unreferenced removed, 13-day-old and referenced kept, configurable); 7
-broken builds and 11 unsafe web roots refused with the web root unchanged; injected failures while
+broken builds refused with the web root unchanged, and 11 unsafe arguments (web roots like `/`, `/tmp`, `/var/www`, a file, the dist directory, a bad retention value) refused; injected failures while
 copying an asset, `sw.js`, `index.html` and `version.json` (after `index.html` was switched), a first-ever
 deployment, and SIGTERM/SIGHUP mid-publish all leave either the complete old or the complete new site and no
-temp files; a reader polling the live site 600+ times during an 801-file publish saw zero broken states.
+temp files; a reader polling the live site hundreds of times during an 801-file publish saw zero broken states.
 The same suite run against the old logic fails 28 checks (the `rm -rf` version on `main`) and 19 checks
 (the first version of this PR), so the tests do detect the problems they target.
