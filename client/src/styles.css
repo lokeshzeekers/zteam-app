@@ -792,3 +792,13 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .chat-skeleton-line { display: block; width: 140px; height: 14px; border-radius: 7px; background: #e6ebf5; animation: skeletonPulse 1.2s ease-in-out infinite; }
 @keyframes skeletonPulse { 50% { opacity: 0.5; } }
 @media (prefers-reduced-motion: reduce) { .chat-skeleton-line { animation: none; } }
+
+/* "New version available" bar (shown only when a reload is needed and wasn't safe to do automatically) */
+.update-banner {
+  position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(92px + env(safe-area-inset-bottom)); z-index: 3000;
+  display: flex; align-items: center; gap: 14px; max-width: calc(100vw - 24px);
+  padding: 10px 12px 10px 16px; border-radius: 999px; background: var(--navy); color: #fff;
+  font-size: 14px; box-shadow: 0 8px 28px rgba(15, 31, 61, 0.35);
+}
+.update-banner button { padding: 6px 14px; border-radius: 999px; background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+.update-banner button:hover:not(:disabled) { background: var(--accent-dark); border-color: var(--accent-dark); color: #fff; }
