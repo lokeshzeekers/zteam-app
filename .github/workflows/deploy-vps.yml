@@ -7,7 +7,9 @@ on:
 
 concurrency:
   group: zteam-production
-  cancel-in-progress: true
+  # Never cancel a deploy that is already running (it could be between publishing the site and
+  # restarting the API). A newer push waits in the queue and deploys right after.
+  cancel-in-progress: false
 
 jobs:
   deploy:
