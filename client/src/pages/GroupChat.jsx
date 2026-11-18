@@ -416,7 +416,7 @@ export default function GroupChat() {
   // Only reachable from Group settings -> Danger zone, and only after the group
   // name has been typed to confirm (see the button's disabled state below).
   async function deleteGroup() {
-    if (deleteConfirmText.trim() !== group.name) return;
+    if (deleteConfirmText.trim() !== (group.name || '').trim()) return;
     try {
       await api.delete(`/api/groups/${groupId}`);
       navigate('/groups');
