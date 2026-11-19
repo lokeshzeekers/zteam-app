@@ -1,6 +1,6 @@
 {
   "name": "zteam-mobile",
-  "version": "1.0.0",
+  "version": "1.0.10",
   "private": true,
   "description": "Zteam Android app (Capacitor wrapper around the live web app)",
   "scripts": {
