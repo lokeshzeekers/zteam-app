@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Outlet, useLocation, useParams } from 'react-router-dom';
+import { Outlet, useLocation, useNavigate, useParams } from 'react-router-dom';
 import Sidebar from './Sidebar';
 import CallManager from './CallManager';
 import NotificationPrompt from './NotificationPrompt';
@@ -11,6 +11,7 @@ import { useNotificationCenter } from '../context/NotificationCenterContext';
 export default function Layout() {
   const [navOpen, setNavOpen] = useState(false);
   const location = useLocation();
+  const navigate = useNavigate();
   const { unreadDMCount, unreadGroupCount, meetingAlertCount } = useNotificationCenter();
   const hasAlerts = unreadDMCount + unreadGroupCount + meetingAlertCount > 0;
 
@@ -23,6 +24,23 @@ export default function Layout() {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [navOpen]);
+
+  // Allow native Android back button / edge-swipe to close the mobile drawer or
+  // return to Inbox instead of exiting the app abruptly.
+  useEffect(() => {
+    window.__zteamHandleBack = () => {
+      if (navOpen) {
+        setNavOpen(false);
+        return true;
+      }
+      if (location.pathname !== '/' && location.pathname !== '/login') {
+        navigate('/');
+        return true;
+      }
+      return false;
+    };
+    return () => { delete window.__zteamHandleBack; };
+  }, [navOpen, location.pathname, navigate]);
 
   return (
     <div className={`app-shell${navOpen ? ' nav-open' : ''}`}>

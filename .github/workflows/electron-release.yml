@@ -104,6 +104,51 @@ jobs:
           CI: "true"
         run: npx capacitor-assets generate --android --iconBackgroundColor '#0f1f3d' --iconBackgroundColorDark '#0f1f3d' --splashBackgroundColor '#0f1f3d' --splashBackgroundColorDark '#0f1f3d'
 
+      - name: Configure Android back button and edge-swipe navigation
+        run: |
+          cat <<'JAVA' > android/app/src/main/java/com/zteam/mobile/MainActivity.java
+          package com.zteam.mobile;
+
+          import android.os.Bundle;
+          import android.webkit.WebView;
+          import androidx.activity.OnBackPressedCallback;
+          import com.getcapacitor.BridgeActivity;
+
+          public class MainActivity extends BridgeActivity {
+              @Override
+              protected void onCreate(Bundle savedInstanceState) {
+                  super.onCreate(savedInstanceState);
+
+                  getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
+                      @Override
+                      public void handleOnBackPressed() {
+                          WebView webView = getBridge() != null ? getBridge().getWebView() : null;
+                          if (webView != null && webView.canGoBack()) {
+                              webView.goBack();
+                              return;
+                          }
+                          if (webView != null) {
+                              webView.evaluateJavascript(
+                                  "(function(){ return typeof window.__zteamHandleBack === 'function' ? window.__zteamHandleBack() : false; })()",
+                                  value -> {
+                                      if (!"true".equals(value)) {
+                                          setEnabled(false);
+                                          getOnBackPressedDispatcher().onBackPressed();
+                                          setEnabled(true);
+                                      }
+                                  }
+                              );
+                              return;
+                          }
+                          setEnabled(false);
+                          getOnBackPressedDispatcher().onBackPressed();
+                          setEnabled(true);
+                      }
+                  });
+              }
+          }
+          JAVA
+
       - name: Grant camera / microphone permissions (calls and meetings)
         run: |
           python3 - <<'PY'
