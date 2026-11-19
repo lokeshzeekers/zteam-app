@@ -83,6 +83,12 @@ export default function ChatWindow({ onStartCall }) {
     setShowScrollBtn(el.scrollHeight - el.scrollTop - el.clientHeight > 240);
   };
   const fileInputRef = useRef(null);
+  const textareaRef = useRef(null);
+  const dragDepthRef = useRef(0);
+  const [isDragging, setIsDragging] = useState(false);
+  const [pendingFiles, setPendingFiles] = useState([]);
+  const pendingFilesRef = useRef([]);
+  pendingFilesRef.current = pendingFiles;
   const typingTimeoutRef = useRef(null);
   const lastTypingEmitRef = useRef(0);
   const otherTypingTimeoutRef = useRef(null);
@@ -208,12 +214,55 @@ export default function ChatWindow({ onStartCall }) {
     };
   }, [userId, loadFirstPage, markDMRead, user.id]);
 
+  const scrollToBottom = useCallback((behavior = 'auto') => {
+    const el = bodyRef.current;
+    if (!el) return;
+    if (behavior === 'auto') {
+      el.scrollTop = el.scrollHeight;
+    } else {
+      el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+    }
+  }, []);
+
   // Layout effect = scroll before paint, so opening a chat lands on the newest message with no
   // visible scroll-down animation. Only NEW messages after that animate.
   useLayoutEffect(() => {
-    if (jump.pendingRef.current) return; // a jump-to-message is about to scroll; don't fight it
-    bottomRef.current?.scrollIntoView({ behavior: Date.now() < instantUntil.current ? 'auto' : 'smooth' });
-  }, [messages.length, calls.length]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (jump.pendingRef.current || jump.detached) return;
+    const isInitial = Date.now() < instantUntil.current;
+    scrollToBottom(isInitial ? 'auto' : 'smooth');
+  }, [messages, calls, scrollToBottom, jump.detached]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Keep pinned to bottom during initial load window as images/attachments/fonts finish layout
+  useEffect(() => {
+    const el = bodyRef.current;
+    if (!el) return undefined;
+    const snapIfInitial = () => {
+      if (!jump.pendingRef.current && !jump.detached && Date.now() < instantUntil.current) {
+        el.scrollTop = el.scrollHeight;
+      }
+    };
+    snapIfInitial();
+    const raf = requestAnimationFrame(snapIfInitial);
+    const t1 = setTimeout(snapIfInitial, 80);
+    const t2 = setTimeout(snapIfInitial, 300);
+    el.addEventListener('load', snapIfInitial, true);
+    let mutObserver;
+    if (typeof MutationObserver !== 'undefined') {
+      mutObserver = new MutationObserver(snapIfInitial);
+      mutObserver.observe(el, { childList: true, subtree: true });
+    }
+    return () => {
+      cancelAnimationFrame(raf);
+      clearTimeout(t1);
+      clearTimeout(t2);
+      el.removeEventListener('load', snapIfInitial, true);
+      mutObserver?.disconnect();
+    };
+  }, [userId, messages.length, calls.length, jump.detached]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => () => {
+    pendingFilesRef.current.forEach((item) => { if (item.previewUrl) URL.revokeObjectURL(item.previewUrl); });
+  }, []);
 
   // After a jump window renders, scroll to the target message.
   useEffect(() => { jump.afterRender(); }, [messages]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -239,8 +288,15 @@ export default function ChatWindow({ onStartCall }) {
     return withDateSeparators(items, (i) => i.time);
   }, [messages, calls]);
 
+  function resizeTextarea(el) {
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${Math.min(el.scrollHeight, 130)}px`;
+  }
+
   function onTextChange(e) {
     setText(e.target.value);
+    resizeTextarea(e.target);
     const socket = getSocket();
     if (!socket) return;
     const now = Date.now();
@@ -256,36 +312,117 @@ export default function ChatWindow({ onStartCall }) {
     }, TYPING_STOP_DELAY);
   }
 
-  function send(e) {
-    e?.preventDefault();
-    if (!text.trim()) return;
-    const socket = getSocket();
-    socket.emit('send-message', { receiverId: Number(userId), content: text, type: 'text' }, (res) => {
-      if (res?.error) setError(res.error);
-    });
-    setText('');
-    clearTimeout(typingTimeoutRef.current);
-    socket.emit('stop-typing', { receiverId: Number(userId) });
+  function stageFiles(fileList) {
+    const incoming = Array.from(fileList || []).filter(Boolean);
+    if (incoming.length === 0) return;
+    setNotice('');
+    const staged = incoming.map((file) => ({
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      file,
+      previewUrl: file.type.startsWith('image/') ? URL.createObjectURL(file) : null,
+    }));
+    setPendingFiles((prev) => [...prev, ...staged]);
+    requestAnimationFrame(() => textareaRef.current?.focus());
   }
 
-  async function onFilePick(e) {
-    const file = e.target.files?.[0];
-    e.target.value = '';
-    if (!file) return;
-    setNotice('');
-    setUploading(true);
-    try {
-      const form = new FormData();
-      form.append('file', file);
-      const { data } = await api.post('/api/files/upload', form, { headers: { 'Content-Type': 'multipart/form-data' } });
-      getSocket().emit('send-message', {
-        receiverId: Number(userId), type: 'file', fileUrl: data.fileUrl, fileName: data.fileName,
-      }, (res) => { if (res?.error) setNotice(res.error); });
-    } catch (err) {
-      setNotice(err?.response?.data?.error || 'Could not upload the file.');
-    } finally {
-      setUploading(false);
+  function removePendingFile(id) {
+    setPendingFiles((prev) => {
+      const target = prev.find((item) => item.id === id);
+      if (target?.previewUrl) URL.revokeObjectURL(target.previewUrl);
+      return prev.filter((item) => item.id !== id);
+    });
+  }
+
+  async function send(e) {
+    e?.preventDefault();
+    if (uploading) return;
+    const trimmed = text.trim();
+    const filesToSend = [...pendingFiles];
+    if (!trimmed && filesToSend.length === 0) return;
+
+    const socket = getSocket();
+    if (trimmed) {
+      socket.emit('send-message', { receiverId: Number(userId), content: text, type: 'text' }, (res) => {
+        if (res?.error) setError(res.error);
+      });
+      setText('');
+      if (textareaRef.current) textareaRef.current.style.height = 'auto';
+      clearTimeout(typingTimeoutRef.current);
+      socket.emit('stop-typing', { receiverId: Number(userId) });
     }
+
+    if (filesToSend.length > 0) {
+      setNotice('');
+      setUploading(true);
+      const failed = [];
+      try {
+        for (const item of filesToSend) {
+          try {
+            const form = new FormData();
+            form.append('file', item.file);
+            const { data } = await api.post('/api/files/upload', form, { headers: { 'Content-Type': 'multipart/form-data' } });
+            socket.emit('send-message', {
+              receiverId: Number(userId), type: 'file', fileUrl: data.fileUrl, fileName: data.fileName,
+            }, (res) => { if (res?.error) setNotice(res.error); });
+            if (item.previewUrl) URL.revokeObjectURL(item.previewUrl);
+          } catch (err) {
+            failed.push(item);
+            setNotice(err?.response?.data?.error || `Could not upload "${item.file.name}".`);
+          }
+        }
+        setPendingFiles(failed);
+      } finally {
+        setUploading(false);
+      }
+    }
+  }
+
+  function onInputKeyDown(e) {
+    if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+      e.preventDefault();
+      send();
+    }
+  }
+
+  function onFilePick(e) {
+    stageFiles(e.target.files);
+    e.target.value = '';
+  }
+
+  function hasFiles(e) {
+    return Array.from(e.dataTransfer?.types || []).includes('Files');
+  }
+
+  function onDragEnter(e) {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    dragDepthRef.current += 1;
+    setIsDragging(true);
+  }
+
+  function onDragOver(e) {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    e.dataTransfer.dropEffect = 'copy';
+  }
+
+  function onDragLeave(e) {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    dragDepthRef.current = Math.max(0, dragDepthRef.current - 1);
+    if (dragDepthRef.current === 0) setIsDragging(false);
+  }
+
+  function onDrop(e) {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    dragDepthRef.current = 0;
+    setIsDragging(false);
+    stageFiles(e.dataTransfer?.files);
   }
 
   function toggleSelecting() {
@@ -345,7 +482,18 @@ export default function ChatWindow({ onStartCall }) {
   }
 
   return (
-    <div className="chat-window">
+    <div
+      className={`chat-window${isDragging ? ' dragging' : ''}`}
+      onDragEnter={onDragEnter}
+      onDragOver={onDragOver}
+      onDragLeave={onDragLeave}
+      onDrop={onDrop}
+    >
+      {isDragging && (
+        <div className="chat-drop-overlay" aria-hidden="true">
+          <div className="chat-drop-card">Drop files to attach</div>
+        </div>
+      )}
       <div className="chat-header">
         <div className="chat-header-left">
           <BackButton fallback="/" />
@@ -502,11 +650,50 @@ export default function ChatWindow({ onStartCall }) {
         }}
       />
       {notice && <div className="chat-notice" role="alert">{notice}</div>}
-      <form className="chat-input" onSubmit={send}>
-        <AttachButton onClick={() => fileInputRef.current.click()} uploading={uploading} />
-        <input type="file" ref={fileInputRef} style={{ display: 'none' }} onChange={onFilePick} />
-        <input value={text} onChange={onTextChange} placeholder="Type a message..." />
-        <button type="submit" className="send-btn" aria-label="Send"><SendIcon size={16} /> <span className="send-label">Send</span></button>
+      <form className="chat-composer" onSubmit={send}>
+        {pendingFiles.length > 0 && (
+          <div className="staged-files-bar">
+            {pendingFiles.map((item) => (
+              <div className="staged-file-item" key={item.id}>
+                {item.previewUrl ? (
+                  <img src={item.previewUrl} alt={item.file.name} className="staged-file-thumb" />
+                ) : (
+                  <span className="staged-file-badge">{(item.file.name.split('.').pop() || 'FILE').slice(0, 4).toUpperCase()}</span>
+                )}
+                <span className="staged-file-name" title={item.file.name}>{item.file.name}</span>
+                <button
+                  type="button"
+                  className="staged-file-remove"
+                  onClick={() => removePendingFile(item.id)}
+                  aria-label={`Remove ${item.file.name}`}
+                  title="Remove"
+                >
+                  ×
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+        <div className="chat-input">
+          <AttachButton onClick={() => fileInputRef.current.click()} uploading={uploading} />
+          <input type="file" multiple ref={fileInputRef} style={{ display: 'none' }} onChange={onFilePick} />
+          <textarea
+            ref={textareaRef}
+            rows={1}
+            value={text}
+            onChange={onTextChange}
+            onKeyDown={onInputKeyDown}
+            placeholder="Type a message... (Shift+Enter for new line)"
+          />
+          <button
+            type="submit"
+            className="send-btn"
+            disabled={uploading || (!text.trim() && pendingFiles.length === 0)}
+            aria-label="Send"
+          >
+            <SendIcon size={16} /> <span className="send-label">{uploading ? 'Sending…' : 'Send'}</span>
+          </button>
+        </div>
       </form>
     </div>
   );

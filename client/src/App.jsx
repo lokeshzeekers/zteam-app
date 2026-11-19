@@ -1,4 +1,4 @@
-import { Routes, Route, Navigate } from 'react-router-dom';
+import { Routes, Route, Navigate, useParams } from 'react-router-dom';
 import { useAuth } from './context/AuthContext';
 import Login from './pages/Login';
 import Inbox from './pages/Inbox';
@@ -13,6 +13,11 @@ import MeetingRoom from './pages/MeetingRoom';
 import Directory from './pages/Directory';
 import Search from './pages/Search';
 import Layout, { ChatRoute } from './components/Layout';
+
+function GroupChatRoute() {
+  const { groupId } = useParams();
+  return <GroupChat key={groupId} />;
+}
 
 function Protected({ children, adminOnly }) {
   const { user, loading } = useAuth();
@@ -38,7 +43,7 @@ export default function App() {
         <Route path="search" element={<Search />} />
         <Route path="chat/:userId" element={<ChatRoute />} />
         <Route path="groups" element={<Groups />} />
-        <Route path="groups/:groupId" element={<GroupChat />} />
+        <Route path="groups/:groupId" element={<GroupChatRoute />} />
         <Route path="meetings" element={<Meetings />} />
         <Route path="profile" element={<Profile />} />
         <Route path="admin" element={<Protected adminOnly><AdminPanel /></Protected>} />
