@@ -95,7 +95,14 @@ jobs:
         run: npm ci
 
       - name: Add Android platform
+        env:
+          CI: "true"
         run: npx cap add android
+
+      - name: Generate Android app icons from desktop logo
+        env:
+          CI: "true"
+        run: npx capacitor-assets generate --android --iconBackgroundColor '#0f1f3d' --iconBackgroundColorDark '#0f1f3d' --splashBackgroundColor '#0f1f3d' --splashBackgroundColorDark '#0f1f3d'
 
       - name: Grant camera / microphone permissions (calls and meetings)
         run: |
