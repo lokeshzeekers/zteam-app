@@ -133,10 +133,17 @@ export default function GroupChat() {
   const jump = useChatJump({ scopeKey: groupId, setMessages, setHasMore, fetchAround });
   const { takeInitial, applyWindow, clearDetached } = jump;
 
+  const isChatVisible = useCallback(() => (
+    typeof document !== 'undefined'
+    && document.visibilityState === 'visible'
+    && (typeof document.hasFocus !== 'function' || document.hasFocus())
+  ), []);
+
   const loadFirstPage = useCallback(() => {
     // Coming from global Search with ?msg=<id>: open the group positioned on that message.
     const around = takeInitial();
-    const req = around ? fetchAround(around) : api.get(`/api/groups/${groupId}/messages`).then((r) => r.data);
+    const params = isChatVisible() ? undefined : { background: 1 };
+    const req = around ? fetchAround(around) : api.get(`/api/groups/${groupId}/messages`, { params }).then((r) => r.data);
     return req
       .then((data) => {
         if (around) { applyWindow(around, data); return; }
@@ -166,19 +173,35 @@ export default function GroupChat() {
     setSelecting(false);
     setSelectedIds([]);
     setEditingId(null);
-    markGroupRead(Number(groupId));
+    if (isChatVisible()) markGroupRead(Number(groupId));
     loadFirstPage();
     loadGroup().catch(() => setError('Group not found or you are not a member'));
     loadCalls();
 
+    const markVisibleGroupRead = () => {
+      if (!isChatVisible()) return;
+      markGroupRead(Number(groupId));
+      api.post(`/api/groups/${groupId}/read`).catch(() => {});
+    };
+
+    window.addEventListener('focus', markVisibleGroupRead);
+    document.addEventListener('visibilitychange', markVisibleGroupRead);
+
     const socket = getSocket();
-    if (!socket) return undefined;
+    if (!socket) {
+      return () => {
+        window.removeEventListener('focus', markVisibleGroupRead);
+        document.removeEventListener('visibilitychange', markVisibleGroupRead);
+      };
+    }
     socket.emit('join-group-room', { groupId: Number(groupId) });
     const handler = ({ message }) => {
       if (String(message.groupId) === String(groupId)) {
         setMessages((prev) => (prev.some((m) => m.id === message.id) ? prev : [...prev, message]));
-        markGroupRead(Number(groupId)); // we're looking right at this group
-        if (message.senderId !== user.id) api.post(`/api/groups/${groupId}/read`).catch(() => {}); // lets the sender see it as read
+        if (isChatVisible()) {
+          markGroupRead(Number(groupId));
+          if (message.senderId !== user.id) api.post(`/api/groups/${groupId}/read`).catch(() => {});
+        }
         setTypingUsers((prev) => { const next = { ...prev }; delete next[message.senderId]; return next; });
       }
     };
@@ -260,6 +283,8 @@ export default function GroupChat() {
     socket.on('group-typing', onGroupTyping);
     socket.on('group-stop-typing', onGroupStopTyping);
     return () => {
+      window.removeEventListener('focus', markVisibleGroupRead);
+      document.removeEventListener('visibilitychange', markVisibleGroupRead);
       socket.off('new-group-message', handler);
       socket.off('group-messages-deleted', onDeleted);
       socket.off('group-message-edited', onEdited);
@@ -280,7 +305,7 @@ export default function GroupChat() {
       clearTimeout(typingTimeoutRef.current);
       Object.values(typingClearTimersRef.current).forEach(clearTimeout);
     };
-  }, [groupId, loadFirstPage, markGroupRead, user.id]);
+  }, [groupId, loadFirstPage, markGroupRead, isChatVisible, user.id]);
 
   const scrollToBottom = useCallback((behavior = 'auto') => {
     const el = bodyRef.current;

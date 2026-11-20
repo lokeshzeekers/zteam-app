@@ -103,10 +103,17 @@ export default function ChatWindow({ onStartCall }) {
   const jump = useChatJump({ scopeKey: userId, setMessages, setHasMore, fetchAround });
   const { takeInitial, applyWindow, clearDetached } = jump;
 
+  const isChatVisible = useCallback(() => (
+    typeof document !== 'undefined'
+    && document.visibilityState === 'visible'
+    && (typeof document.hasFocus !== 'function' || document.hasFocus())
+  ), []);
+
   const loadFirstPage = useCallback(() => {
     // Coming from global Search with ?msg=<id>: open the chat positioned on that message.
     const around = takeInitial();
-    const req = around ? fetchAround(around) : api.get(`/api/messages/with/${userId}`).then((r) => r.data);
+    const params = isChatVisible() ? undefined : { background: 1 };
+    const req = around ? fetchAround(around) : api.get(`/api/messages/with/${userId}`, { params }).then((r) => r.data);
     return req
       .then((data) => {
         if (data.peer) { peerCache.set(Number(userId), data.peer); setPeer(data.peer); }
@@ -137,20 +144,36 @@ export default function ChatWindow({ onStartCall }) {
     setSelecting(false);
     setSelectedIds([]);
     setEditingId(null);
-    markDMRead(Number(userId));
+    if (isChatVisible()) markDMRead(Number(userId));
     loadFirstPage();
     loadCalls();
 
+    const markVisibleChatRead = () => {
+      if (!isChatVisible()) return;
+      markDMRead(Number(userId));
+      api.post(`/api/messages/with/${userId}/read`).catch(() => {});
+    };
+
+    window.addEventListener('focus', markVisibleChatRead);
+    document.addEventListener('visibilitychange', markVisibleChatRead);
+
     const socket = getSocket();
-    if (!socket) return undefined;
+    if (!socket) {
+      return () => {
+        window.removeEventListener('focus', markVisibleChatRead);
+        document.removeEventListener('visibilitychange', markVisibleChatRead);
+      };
+    }
     const handler = ({ message }) => {
       if (message.senderId === Number(userId) || message.receiverId === Number(userId)) {
         setMessages((prev) => (prev.some((m) => m.id === message.id) ? prev : [...prev, message]));
         if (message.senderId === Number(userId)) {
-          markDMRead(Number(userId));
           setOtherTyping(false);
-          // I'm looking at this chat: mark it read on the server so the sender's ticks turn read live.
-          api.post(`/api/messages/with/${userId}/read`).catch(() => {});
+          // Only mark read when this window/tab is actually visible & focused.
+          if (isChatVisible()) {
+            markDMRead(Number(userId));
+            api.post(`/api/messages/with/${userId}/read`).catch(() => {});
+          }
         }
       }
     };
@@ -198,6 +221,8 @@ export default function ChatWindow({ onStartCall }) {
     socket.on('stop-typing', onStopTyping);
     socket.on('connect', loadFirstPage);
     return () => {
+      window.removeEventListener('focus', markVisibleChatRead);
+      document.removeEventListener('visibilitychange', markVisibleChatRead);
       socket.off('new-message', handler);
       socket.off('message-sent', handler);
       socket.off('messages-deleted', onDeleted);
@@ -212,7 +237,7 @@ export default function ChatWindow({ onStartCall }) {
       clearTimeout(otherTypingTimeoutRef.current);
       socket.emit('stop-typing', { receiverId: Number(userId) });
     };
-  }, [userId, loadFirstPage, markDMRead, user.id]);
+  }, [userId, loadFirstPage, markDMRead, isChatVisible, user.id]);
 
   const scrollToBottom = useCallback((behavior = 'auto') => {
     const el = bodyRef.current;

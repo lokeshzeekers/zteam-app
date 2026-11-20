@@ -86,10 +86,10 @@ async function getConversation(req, res) {
   const hasMore = page.length > limit;
   const messages = page.slice(0, limit).reverse(); // oldest-first for rendering
 
-  // Only the newest page (no "before" cursor) represents "I just opened this
-  // chat" — mark incoming messages read/delivered from there, not while
-  // scrolling up through old history.
-  if (!before) {
+  // Only the newest page (no "before" cursor, and not a background reconnect
+  // while the window/tab is unfocused) represents "I just opened this chat".
+  const isBackground = req.query.background === '1';
+  if (!before && !isBackground) {
     const now = new Date();
     await Message.update(
       { readAt: now, deliveredAt: now },

@@ -225,8 +225,9 @@ async function getGroupMessages(req, res) {
   const hasMore = page.length > limit;
   const messages = page.slice(0, limit).reverse();
 
-  // Opening the group (the first, non-paginated page) marks it read.
-  if (!before) {
+  // Opening the group (the first, non-paginated page while visible/focused) marks it read.
+  const isBackground = req.query.background === '1';
+  if (!before && !isBackground) {
     await markRead(req.user.id, Number(groupId), req.app.get('io'));
   }
 
