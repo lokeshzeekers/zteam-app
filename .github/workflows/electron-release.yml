@@ -104,13 +104,20 @@ jobs:
           CI: "true"
         run: npx capacitor-assets generate --android --iconBackgroundColor '#0f1f3d' --iconBackgroundColorDark '#0f1f3d' --splashBackgroundColor '#0f1f3d' --splashBackgroundColorDark '#0f1f3d'
 
-      - name: Configure Android back button and edge-swipe navigation
+      - name: Configure Android back button, edge-swipe navigation, and native file downloads
         run: |
           cat <<'JAVA' > android/app/src/main/java/com/zteam/mobile/MainActivity.java
           package com.zteam.mobile;
 
+          import android.app.DownloadManager;
+          import android.content.Context;
+          import android.net.Uri;
           import android.os.Bundle;
+          import android.os.Environment;
+          import android.webkit.CookieManager;
+          import android.webkit.URLUtil;
           import android.webkit.WebView;
+          import android.widget.Toast;
           import androidx.activity.OnBackPressedCallback;
           import com.getcapacitor.BridgeActivity;
 
@@ -118,6 +125,32 @@ jobs:
               @Override
               protected void onCreate(Bundle savedInstanceState) {
                   super.onCreate(savedInstanceState);
+
+                  WebView initialWebView = getBridge() != null ? getBridge().getWebView() : null;
+                  if (initialWebView != null) {
+                      initialWebView.setDownloadListener((url, userAgent, contentDisposition, mimeType, contentLength) -> {
+                          try {
+                              if (url == null || !url.startsWith("http")) return;
+                              String fileName = URLUtil.guessFileName(url, contentDisposition, mimeType);
+                              DownloadManager.Request request = new DownloadManager.Request(Uri.parse(url));
+                              request.setMimeType(mimeType);
+                              String cookies = CookieManager.getInstance().getCookie(url);
+                              if (cookies != null) request.addRequestHeader("Cookie", cookies);
+                              request.addRequestHeader("User-Agent", userAgent);
+                              request.setTitle(fileName);
+                              request.setDescription("Downloading file...");
+                              request.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
+                              request.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, fileName);
+                              DownloadManager dm = (DownloadManager) getSystemService(Context.DOWNLOAD_SERVICE);
+                              if (dm != null) {
+                                  dm.enqueue(request);
+                                  Toast.makeText(getApplicationContext(), "Downloading " + fileName, Toast.LENGTH_SHORT).show();
+                              }
+                          } catch (Exception e) {
+                              Toast.makeText(getApplicationContext(), "Download failed", Toast.LENGTH_SHORT).show();
+                          }
+                      });
+                  }
 
                   getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
                       @Override

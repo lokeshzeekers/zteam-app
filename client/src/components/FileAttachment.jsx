@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import api from '../api';
+import api, { API_BASE } from '../api';
 import { FileIcon, SpinnerIcon } from './ChatIcons';
 
 // Map extension -> MIME type we are willing to render inline. We build the
@@ -96,6 +96,20 @@ export default function FileAttachment({ fileUrl, fileName }) {
   async function download() {
     setBusy(true); setError('');
     try {
+      const isAndroid = typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent);
+      if (isAndroid) {
+        // Android WebView (Capacitor) ignores blob: <a download> links; use a short-lived
+        // signed HTTPS URL so Android's native DownloadManager saves it to Downloads.
+        const name = storedName(fileUrl);
+        const { data } = await api.post(`/api/files/${encodeURIComponent(name)}/download-link`, { fileName });
+        const a = document.createElement('a');
+        a.href = `${API_BASE}${data.url}`;
+        a.download = fileName || name;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        return;
+      }
       saveBlob(await fetchBlob(fileUrl), fileName);
     } catch {
       setError('Download failed');

@@ -2,8 +2,9 @@ const router = require('express').Router();
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
+const jwt = require('jsonwebtoken');
 const { requireAuth } = require('../middleware/auth');
-const { uploadFile } = require('../controllers/fileController');
+const { uploadFile, createDownloadLink } = require('../controllers/fileController');
 
 const uploadDir = path.resolve(process.env.UPLOAD_DIR || './uploads');
 if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
@@ -56,6 +57,37 @@ function handleUpload(req, res, next) {
 }
 
 router.post('/upload', requireAuth, handleUpload, uploadFile);
+router.post('/:filename/download-link', requireAuth, createDownloadLink);
+
+// Short-lived signed URL download for Android WebView / mobile DownloadManager
+// (which cannot send Authorization headers or save blob: URLs).
+router.get('/download/:filename', (req, res) => {
+  const { filename } = req.params;
+  const token = req.query.token;
+  if (!filename || path.basename(filename) !== filename || filename.startsWith('.')) {
+    return res.status(400).json({ error: 'Invalid file name' });
+  }
+  if (!token || typeof token !== 'string') {
+    return res.status(401).json({ error: 'Missing download token' });
+  }
+  let payload;
+  try {
+    payload = jwt.verify(token, process.env.JWT_SECRET);
+  } catch {
+    return res.status(401).json({ error: 'Download link expired. Please tap Download again.' });
+  }
+  if (payload.purpose !== 'file-download' || payload.file !== filename) {
+    return res.status(403).json({ error: 'Invalid download token' });
+  }
+  const full = path.join(uploadDir, filename);
+  if (!fs.existsSync(full)) return res.status(404).json({ error: 'File not found' });
+
+  const safeDownloadName = String(payload.name || filename).replace(/["\r\n]/g, '_');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Content-Security-Policy', "sandbox; default-src 'none'");
+  res.setHeader('Cache-Control', 'private, no-store');
+  res.download(full, safeDownloadName, { dotfiles: 'deny' });
+});
 
 // Authenticated file fetch. The client reads this with its Bearer token and
 // turns the response into a blob for preview/download, so it works the same
