@@ -476,6 +476,18 @@ export default function GroupChat() {
     }
   }
 
+  const [isMobileView, setIsMobileView] = useState(() =>
+    typeof window !== 'undefined' && window.matchMedia('(max-width: 767px)').matches
+  );
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined;
+    const mq = window.matchMedia('(max-width: 767px)');
+    const onChange = (e) => setIsMobileView(e.matches);
+    setIsMobileView(mq.matches);
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  }, []);
+
   function onInputKeyDown(e) {
     if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault();
@@ -881,7 +893,7 @@ export default function GroupChat() {
             value={text}
             onChange={onTextChange}
             onKeyDown={onInputKeyDown}
-            placeholder="Message the group... (Shift+Enter for new line)"
+            placeholder={isMobileView ? "Message the group..." : "Message the group... (Shift+Enter for new line)"}
           />
           <button
             type="submit"
